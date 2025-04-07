@@ -343,7 +343,7 @@ def problem_page():
             st.rerun()
     
     # 처음 페이지가 로드될 때 또는 다음 문제 버튼을 눌렀을 때 문제를 가져옴
-    if not hasattr(st.session_state, 'current_problem') or st.session_state.current_problem is None or st.session_state.submitted:
+    if not hasattr(st.session_state, 'current_problem') or st.session_state.current_problem is None:
         with st.spinner("문제를 불러오는 중..."):
             try:
                 # 이전 문제 정보 저장
@@ -391,10 +391,6 @@ def problem_page():
                             del st.session_state[key]
                     
                     st.session_state.current_problem = problem
-                    st.session_state.submitted = False
-                    st.session_state.feedback = None
-                    st.session_state.score = None
-                    st.session_state.show_result = False
                     
                     # 보기가 있는지 확인하여 문제 유형 결정
                     has_options = False
@@ -409,7 +405,7 @@ def problem_page():
                     st.error("문제를 불러오는데 실패했습니다.")
                     return
             except Exception as e:
-                st.error("문제를 불러오는데 실패했습니다.")
+                st.error(f"문제를 불러오는데 실패했습니다: {str(e)}")
                 return
     
     problem = st.session_state.current_problem
@@ -501,68 +497,19 @@ def problem_page():
                 '학년': problem.get("학년", "")
             }
             
-            # 학생이 마지막 문제까지 풀었거나 채점을 원하는 경우
-            if st.session_state.problem_count + 1 >= st.session_state.max_problems:
+            # 문제 카운트 증가
+            st.session_state.problem_count += 1
+            
+            # 마지막 문제인지 체크
+            if st.session_state.problem_count >= st.session_state.max_problems:
                 # 마지막 문제인 경우, 시험지 제출 화면으로 이동
                 st.session_state.current_problem = None
-                st.session_state.submitted = False
-                st.session_state.exam_completed = True
                 st.session_state.page = "exam_result"
                 st.rerun()
             else:
-                with st.spinner("채점 중..."):
-                    try:
-                        # GPT를 사용하여 채점 및 피드백 생성
-                        score, feedback = generate_feedback(
-                            problem.get("문제내용", ""),
-                            student_answer,
-                            problem.get("정답", ""),
-                            problem.get("해설", "")
-                        )
-                        
-                        # 세션 상태에 결과 저장
-                        if "submitted" not in st.session_state:
-                            st.session_state.submitted = False
-                        st.session_state.submitted = True
-                        
-                        if "feedback" not in st.session_state:
-                            st.session_state.feedback = None
-                        st.session_state.feedback = feedback
-                        
-                        if "score" not in st.session_state:
-                            st.session_state.score = None
-                        st.session_state.score = score
-                        
-                        if "show_result" not in st.session_state:
-                            st.session_state.show_result = False
-                        st.session_state.show_result = True
-                        
-                        if "student_answer" not in st.session_state:
-                            st.session_state.student_answer = None
-                        st.session_state.student_answer = student_answer
-                        
-                        # Google Sheets에 저장
-                        save_student_answer(
-                            st.session_state.student_id,
-                            st.session_state.student_name,
-                            problem.get("문제ID", ""),
-                            student_answer,
-                            score,
-                            feedback
-                        )
-                        
-                        # 학생 취약점 업데이트
-                        is_correct = (score == 100)
-                        update_problem_stats(
-                            st.session_state.student_id,
-                            problem.get("문제ID", ""),
-                            problem.get("키워드", ""),
-                            is_correct
-                        )
-                        
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"채점 중 오류가 발생했습니다.")
+                # 다음 문제로 이동
+                st.session_state.current_problem = None
+                st.rerun()
 
 def my_performance_page():
     """학생 성적 분석 페이지"""
@@ -920,44 +867,41 @@ def exam_score_page():
 
 def main():
     """메인 함수"""
-    # CSS로 디버그 정보 숨기기
+    # CSS 스타일
     hide_streamlit_style = """
-        <style>
-            #MainMenu {visibility: hidden !important;}
-            footer {visibility: hidden !important;}
-            .stDeployButton {display:none !important;}
-            div[data-testid="stToolbar"] {visibility: hidden !important;}
-            div[data-testid="stDecoration"] {visibility: hidden !important;}
-            div[data-testid="stStatusWidget"] {visibility: hidden !important;}
-            div[data-testid="stHeader"] {visibility: hidden !important;}
-            div.block-container {padding-top: 0rem !important;}
-            div.block-container {padding-bottom: 0rem !important;}
-            div[data-testid="stAppViewContainer"] > section:first-child {padding-top: 1rem !important;}
-            div[data-testid="stVerticalBlock"] {gap: 1rem !important;}
-            div[data-testid="stConnectionStatus"] {visibility: hidden !important;}
-            div[data-testid="stSpinner"] {visibility: hidden !important;}
-            div[data-testid="stDebugElement"] {visibility: hidden !important;}
-            div[data-testid="stMarkdownContainer"] > div > p {margin-bottom: 0.5rem !important;}
-            div.st-emotion-cache-16txtl3 {padding-top: 0rem !important;}
-            div.st-emotion-cache-16txtl3 {padding-bottom: 0rem !important;}
-            div.st-emotion-cache-ue6h4q {padding-top: 0rem !important;}
-            div.stAlert {display: none !important;}
-            div[data-baseweb="notification"] {display: none !important;}
-            div[data-testid="stNotificationContainer"] {display: none !important;}
-            div[data-testid="stAppViewBlockContainer"] > section[data-testid="stCaptionContainer"] {display: none !important;}
-            iframe[name="stNotificationFrame"] {display: none !important;}
-            div[data-testid="stForm"] {border: none !important; padding: 0 !important;}
-            div.stRadio > div {flex-direction: column !important;}
-            div.stRadio label {padding: 10px !important; border: 1px solid #f0f0f0 !important; border-radius: 5px !important; margin: 5px 0 !important;}
-            div.stRadio label:hover {background-color: #f8f8f8 !important;}
-            button[kind="primaryFormSubmit"] {width: 100% !important; padding: 10px !important; font-weight: bold !important;}
-            div.stButton button {font-weight: bold !important; padding: 8px 16px !important;}
-            div.stTextInput input {padding: 10px !important; font-size: 16px !important;}
-            h3 {margin-top: 1rem !important; margin-bottom: 0.5rem !important;}
-            div.element-container {margin-bottom: 0.5rem !important;}
-            div.stForm [data-testid="stVerticalBlock"] > div:has(div.stButton) {margin-top: 1rem !important;}
-        </style>
+    <style>
+        footer {visibility: hidden;}
+        #MainMenu {visibility: hidden;}
+        .stDeployButton {display:none;}
+        div.block-container {padding-top: 2rem;}
+        div.block-container {max-width: 1000px;}
+        
+        /* 버튼 스타일 */
+        .stButton > button {
+            font-weight: bold;
+            padding: 8px 16px;
+            width: 100%;
+            border-radius: 6px;
+        }
+        
+        /* 문제 컨테이너 */
+        .question-container {
+            border: 1px solid #eee;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        /* 진행 상태 표시 */
+        .progress-container {
+            background-color: #f0f0f0;
+            border-radius: 6px;
+            padding: 10px 15px;
+            margin-bottom: 20px;
+        }
+    </style>
     """
+    
     st.markdown(hide_streamlit_style, unsafe_allow_html=True)
     
     # 현재 페이지에 따라 내용 표시
@@ -970,10 +914,7 @@ def main():
     elif st.session_state.page == "student_dashboard":
         student_dashboard()
     elif st.session_state.page == "problem":
-        if st.session_state.show_result:
-            result_page()
-        else:
-            problem_page()
+        problem_page()
     elif st.session_state.page == "my_performance":
         my_performance_page()
     elif st.session_state.page == "exam_result":
