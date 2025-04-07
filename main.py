@@ -296,6 +296,9 @@ def problem_page():
     
     if 'time_limit' not in st.session_state:
         st.session_state.time_limit = 50 * 60  # 50분(초 단위)
+        
+    if 'student_answers' not in st.session_state:
+        st.session_state.student_answers = {}
     
     # 현재 시간으로 경과 시간 계산
     elapsed_time = time.time() - st.session_state.start_time
@@ -305,16 +308,17 @@ def problem_page():
     mins, secs = divmod(int(remaining_time), 60)
     time_str = f"{mins:02d}:{secs:02d}"
     
-    # 제한 시간이 끝났는지 또는 최대 문제 수에 도달했는지 확인
-    if remaining_time <= 0 or st.session_state.problem_count >= st.session_state.max_problems:
-        st.success("시험이 종료되었습니다!")
-        st.markdown(f"**풀이한 문제 수**: {st.session_state.problem_count}/{st.session_state.max_problems}")
+    # 제한 시간이 끝났는지 확인
+    if remaining_time <= 0:
+        st.success("시험 시간이 종료되었습니다! 시험지를 제출해주세요.")
         
-        if st.button("결과 확인", use_container_width=True):
-            st.session_state.page = "my_performance"
+        if st.button("시험지 제출하기", use_container_width=True, key="final_submit_timeout"):
+            # 시험 결과 처리
+            st.session_state.exam_completed = True
+            st.session_state.page = "exam_result"
             st.rerun()
         
-        if st.button("대시보드로 돌아가기", use_container_width=True):
+        if st.button("대시보드로 돌아가기", key="back_to_dashboard_timeout"):
             st.session_state.page = "student_dashboard"
             st.rerun()
         
@@ -485,59 +489,80 @@ def problem_page():
         if not student_answer:
             st.error("답을 입력하거나 선택해주세요.")
         else:
-            with st.spinner("채점 중..."):
-                try:
-                    # GPT를 사용하여 채점 및 피드백 생성
-                    score, feedback = generate_feedback(
-                        problem.get("문제내용", ""),
-                        student_answer,
-                        problem.get("정답", ""),
-                        problem.get("해설", "")
-                    )
-                    
-                    # 세션 상태에 결과 저장
-                    if "submitted" not in st.session_state:
-                        st.session_state.submitted = False
-                    st.session_state.submitted = True
-                    
-                    if "feedback" not in st.session_state:
-                        st.session_state.feedback = None
-                    st.session_state.feedback = feedback
-                    
-                    if "score" not in st.session_state:
-                        st.session_state.score = None
-                    st.session_state.score = score
-                    
-                    if "show_result" not in st.session_state:
-                        st.session_state.show_result = False
-                    st.session_state.show_result = True
-                    
-                    if "student_answer" not in st.session_state:
-                        st.session_state.student_answer = None
-                    st.session_state.student_answer = student_answer
-                    
-                    # Google Sheets에 저장
-                    save_student_answer(
-                        st.session_state.student_id,
-                        st.session_state.student_name,
-                        problem.get("문제ID", ""),
-                        student_answer,
-                        score,
-                        feedback
-                    )
-                    
-                    # 학생 취약점 업데이트
-                    is_correct = (score == 100)
-                    update_problem_stats(
-                        st.session_state.student_id,
-                        problem.get("문제ID", ""),
-                        problem.get("키워드", ""),
-                        is_correct
-                    )
-                    
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"채점 중 오류가 발생했습니다.")
+            # 현재 문제의 학생 답변을 저장
+            st.session_state.student_answers[problem['문제ID']] = {
+                '문제': problem.get("문제내용", ""),
+                '학생답안': student_answer,
+                '정답': problem.get("정답", ""),
+                '보기정보': {f"보기{i}": problem.get(f"보기{i}", "") for i in range(1, 6) if f"보기{i}" in problem},
+                '키워드': problem.get("키워드", ""),
+                '문제유형': problem.get("문제유형", ""),
+                '과목': problem.get("과목", ""),
+                '학년': problem.get("학년", "")
+            }
+            
+            # 학생이 마지막 문제까지 풀었거나 채점을 원하는 경우
+            if st.session_state.problem_count + 1 >= st.session_state.max_problems:
+                # 마지막 문제인 경우, 시험지 제출 화면으로 이동
+                st.session_state.current_problem = None
+                st.session_state.submitted = False
+                st.session_state.exam_completed = True
+                st.session_state.page = "exam_result"
+                st.rerun()
+            else:
+                with st.spinner("채점 중..."):
+                    try:
+                        # GPT를 사용하여 채점 및 피드백 생성
+                        score, feedback = generate_feedback(
+                            problem.get("문제내용", ""),
+                            student_answer,
+                            problem.get("정답", ""),
+                            problem.get("해설", "")
+                        )
+                        
+                        # 세션 상태에 결과 저장
+                        if "submitted" not in st.session_state:
+                            st.session_state.submitted = False
+                        st.session_state.submitted = True
+                        
+                        if "feedback" not in st.session_state:
+                            st.session_state.feedback = None
+                        st.session_state.feedback = feedback
+                        
+                        if "score" not in st.session_state:
+                            st.session_state.score = None
+                        st.session_state.score = score
+                        
+                        if "show_result" not in st.session_state:
+                            st.session_state.show_result = False
+                        st.session_state.show_result = True
+                        
+                        if "student_answer" not in st.session_state:
+                            st.session_state.student_answer = None
+                        st.session_state.student_answer = student_answer
+                        
+                        # Google Sheets에 저장
+                        save_student_answer(
+                            st.session_state.student_id,
+                            st.session_state.student_name,
+                            problem.get("문제ID", ""),
+                            student_answer,
+                            score,
+                            feedback
+                        )
+                        
+                        # 학생 취약점 업데이트
+                        is_correct = (score == 100)
+                        update_problem_stats(
+                            st.session_state.student_id,
+                            problem.get("문제ID", ""),
+                            problem.get("키워드", ""),
+                            is_correct
+                        )
+                        
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"채점 중 오류가 발생했습니다.")
 
 def my_performance_page():
     """학생 성적 분석 페이지"""
@@ -698,6 +723,201 @@ def result_page():
             st.session_state.page = "student_dashboard"
             st.rerun()
 
+def exam_result_page():
+    """시험 결과 페이지"""
+    if not hasattr(st.session_state, 'student_id') or st.session_state.student_id is None:
+        st.error("로그인 정보가 없습니다.")
+        if st.button("로그인 페이지로 돌아가기"):
+            st.session_state.page = "intro"
+            st.rerun()
+        return
+    
+    st.title("시험 완료!")
+    
+    # 시간 및 문제 수 표시
+    if 'start_time' in st.session_state and 'time_limit' in st.session_state:
+        elapsed_time = time.time() - st.session_state.start_time
+        mins, secs = divmod(int(min(elapsed_time, st.session_state.time_limit)), 60)
+        time_str = f"{mins:02d}:{secs:02d}"
+        
+        st.markdown(f"### 시험 시간: {time_str}")
+        
+    st.markdown(f"### 총 문제 수: {len(st.session_state.get('student_answers', {}))}/{st.session_state.get('max_problems', 20)}")
+    
+    # 시험지 제출 확인
+    st.subheader("시험지를 제출하시겠습니까?")
+    st.markdown("모든 답안을 제출하고 채점을 진행합니다.")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("시험지 제출하기", use_container_width=True, key="final_submit"):
+            # 모든 문제 채점 및 결과 저장
+            with st.spinner("채점 중..."):
+                try:
+                    results = {}
+                    total_score = 0
+                    correct_count = 0
+                    
+                    # 모든 답안 채점
+                    for problem_id, problem_data in st.session_state.student_answers.items():
+                        student_answer = problem_data['학생답안']
+                        correct_answer = problem_data['정답']
+                        
+                        # 단답형 또는 객관식 여부 확인
+                        is_objective = correct_answer.startswith("보기")
+                        
+                        if is_objective:
+                            # 객관식 문제는 정확히 일치해야 함
+                            is_correct = (student_answer == correct_answer)
+                        else:
+                            # 단답형 문제는 대소문자, 공백 무시
+                            normalized_student = student_answer.lower().strip() if student_answer else ""
+                            normalized_correct = correct_answer.lower().strip()
+                            is_correct = (normalized_student == normalized_correct)
+                        
+                        score = 100 if is_correct else 0
+                        
+                        if is_correct:
+                            correct_count += 1
+                        
+                        results[problem_id] = {
+                            'score': score,
+                            'is_correct': is_correct,
+                            'student_answer': student_answer,
+                            'correct_answer': correct_answer
+                        }
+                        
+                        # 학생 취약점 업데이트
+                        keywords = problem_data['키워드'].split(',')
+                        update_problem_stats(
+                            st.session_state.student_id,
+                            problem_id,
+                            problem_data['키워드'],
+                            is_correct
+                        )
+                    
+                    # 총점 계산 (백분율)
+                    if results:
+                        total_score = (correct_count / len(results)) * 100
+                    
+                    # 결과 저장
+                    st.session_state.exam_results = {
+                        'details': results,
+                        'total_score': total_score,
+                        'correct_count': correct_count,
+                        'total_problems': len(results)
+                    }
+                    
+                    # 성적 분석 페이지로 이동
+                    st.session_state.page = "exam_score"
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"채점 중 오류가 발생했습니다: {str(e)}")
+    
+    with col2:
+        if st.button("취소하고 계속 풀기", use_container_width=True):
+            # 다음 문제로 이동
+            st.session_state.page = "problem"
+            st.session_state.submitted = False
+            st.session_state.exam_completed = False
+            st.rerun()
+    
+    # 학생 답안 리스트 표시
+    st.markdown("### 제출할 답안")
+    
+    for idx, (problem_id, problem_data) in enumerate(st.session_state.student_answers.items(), 1):
+        with st.expander(f"문제 {idx}: {problem_data['과목']} ({problem_data['문제유형']})"):
+            st.markdown(problem_data['문제'])
+            
+            if '보기정보' in problem_data and any(problem_data['보기정보'].values()):
+                st.markdown("#### 보기:")
+                for option_key, option_text in problem_data['보기정보'].items():
+                    if option_text:
+                        st.markdown(f"**{option_key}**: {option_text}")
+            
+            st.markdown(f"**제출한 답안**: {problem_data['학생답안']}")
+
+def exam_score_page():
+    """시험 점수 결과 페이지"""
+    if not hasattr(st.session_state, 'student_id') or st.session_state.student_id is None:
+        st.error("로그인 정보가 없습니다.")
+        if st.button("로그인 페이지로 돌아가기"):
+            st.session_state.page = "intro"
+            st.rerun()
+        return
+    
+    if 'exam_results' not in st.session_state:
+        st.error("시험 결과를 찾을 수 없습니다.")
+        if st.button("대시보드로 돌아가기"):
+            st.session_state.page = "student_dashboard"
+            st.rerun()
+        return
+    
+    st.title("시험 결과")
+    
+    # 학생 정보
+    st.markdown(f"**학생**: {st.session_state.get('student_name', '학생')} | **학년**: {st.session_state.get('student_grade', 'N/A')} | **실력등급**: {st.session_state.get('student_level', 'N/A')}")
+    
+    results = st.session_state.exam_results
+    
+    # 총점 표시
+    score = results['total_score']
+    st.markdown(f"### 총점: {score:.1f}점")
+    
+    # 점수에 따른 메시지
+    if score >= 90:
+        st.success("축하합니다! 아주 우수한 성적입니다. 👏👏👏")
+    elif score >= 80:
+        st.success("잘했습니다! 좋은 성적입니다. 👏👏")
+    elif score >= 70:
+        st.info("괜찮은 성적입니다. 조금만 더 노력해보세요! 👍")
+    elif score >= 60:
+        st.warning("더 노력이 필요합니다. 틀린 문제를 복습해보세요.")
+    else:
+        st.error("많은 노력이 필요합니다. 기초부터 다시 공부해보세요.")
+    
+    # 결과 요약
+    st.markdown(f"### 정답률: {results['correct_count']}/{results['total_problems']} 문제")
+    
+    # 각 문제별 결과
+    st.subheader("상세 결과")
+    
+    for idx, (problem_id, result) in enumerate(results['details'].items(), 1):
+        problem_data = st.session_state.student_answers.get(problem_id, {})
+        
+        if result['is_correct']:
+            icon = "✅"
+        else:
+            icon = "❌"
+        
+        with st.expander(f"{icon} 문제 {idx}: {problem_data.get('과목', '과목 없음')} ({problem_data.get('문제유형', '유형 없음')})"):
+            st.markdown(problem_data.get('문제', '문제 없음'))
+            
+            if '보기정보' in problem_data and any(problem_data['보기정보'].values()):
+                st.markdown("#### 보기:")
+                for option_key, option_text in problem_data['보기정보'].items():
+                    if option_text:
+                        st.markdown(f"**{option_key}**: {option_text}")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("#### 제출한 답안")
+                st.markdown(f"**{result['student_answer']}**")
+            with col2:
+                st.markdown("#### 정답")
+                st.markdown(f"**{result['correct_answer']}**")
+    
+    # 성적 분석 버튼
+    if st.button("나의 성적 분석 보기", use_container_width=True):
+        st.session_state.page = "my_performance"
+        st.rerun()
+    
+    # 대시보드로 돌아가기 버튼
+    if st.button("대시보드로 돌아가기", use_container_width=True):
+        st.session_state.page = "student_dashboard"
+        st.rerun()
+
 def main():
     """메인 함수"""
     # CSS로 디버그 정보 숨기기
@@ -756,6 +976,10 @@ def main():
             problem_page()
     elif st.session_state.page == "my_performance":
         my_performance_page()
+    elif st.session_state.page == "exam_result":
+        exam_result_page()
+    elif st.session_state.page == "exam_score":
+        exam_score_page()
     else:
         intro_page()
 
