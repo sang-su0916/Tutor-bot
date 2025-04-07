@@ -20,13 +20,40 @@ def connect_to_sheets():
             if "gcp_service_account" in st.secrets:
                 service_account_info = st.secrets["gcp_service_account"]
                 service_account_info = dict(service_account_info)
-                scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-                creds = ServiceAccountCredentials.from_json_keyfile_dict(service_account_info, scope)
                 
-                client = gspread.authorize(creds)
-                # 지정된 ID의 스프레드시트 열기
-                sheet = client.open_by_key(sheets_id)
-                return sheet
+                # 디버깅: 필수 필드 확인
+                required_fields = ["type", "project_id", "private_key_id", "private_key", "client_email"]
+                for field in required_fields:
+                    if field not in service_account_info:
+                        st.error(f"서비스 계정 설정에서 {field} 필드를 찾을 수 없습니다.")
+                        return None
+                
+                scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+                try:
+                    # 디버깅: 서비스 계정 정보 확인
+                    st.info(f"스프레드시트 ID: {sheets_id}")
+                    st.info(f"서비스 계정 이메일: {service_account_info.get('client_email', 'Not found')}")
+                    
+                    creds = ServiceAccountCredentials.from_json_keyfile_dict(service_account_info, scope)
+                    client = gspread.authorize(creds)
+                    
+                    try:
+                        # 지정된 ID의 스프레드시트 열기 시도
+                        sheet = client.open_by_key(sheets_id)
+                        # 연결 성공 시 워크시트 목록 확인
+                        worksheet_list = sheet.worksheets()
+                        st.success(f"연결된 워크시트: {[ws.title for ws in worksheet_list]}")
+                        return sheet
+                    except gspread.exceptions.APIError as api_error:
+                        st.error(f"Google Sheets API 오류: {str(api_error)}")
+                        return None
+                    except Exception as sheet_error:
+                        st.error(f"스프레드시트 열기 오류: {str(sheet_error)}")
+                        return None
+                        
+                except Exception as auth_error:
+                    st.error(f"인증 처리 중 오류 발생: {str(auth_error)}")
+                    return None
             else:
                 st.error("서비스 계정 설정을 찾을 수 없습니다.")
                 return None
