@@ -1,110 +1,101 @@
 import openai
 import streamlit as st
-import os
+import time
+from datetime import datetime
 
-def get_openai_client():
+def generate_feedback(question, student_answer, correct_answer, explanation):
     """
-    OpenAI API 클라이언트를 생성하고 반환합니다.
+    GPT를 사용하여 학생의 답안을 채점하고 피드백을 생성합니다.
     """
     try:
-        # 환경변수에서 API 키 가져오기
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            # 환경변수에 없으면 Streamlit secrets에서 시도
-            api_key = st.secrets.get("OPENAI_API_KEY")
-            
-        if not api_key:
-            st.error("OpenAI API 키가 설정되지 않았습니다.")
-            return None
-            
-        client = openai.OpenAI(api_key=api_key)
-        return client
-    except Exception as e:
-        st.error(f"OpenAI API 클라이언트 생성 오류: {e}")
-        return None
-
-def generate_feedback(problem_content, student_answer, correct_answer, explanation):
-    """
-    GPT를 사용하여 학생 답변에 대한 채점 및 피드백을 생성합니다.
-    
-    Args:
-        problem_content (str): 문제 내용
-        student_answer (str): 학생의 답변 (예: '보기1', '보기2', 등)
-        correct_answer (str): 정답 (예: '보기1', '보기2', 등)
-        explanation (str): 문제 해설
+        # API 키 확인
+        if "OPENAI_API_KEY" not in st.secrets:
+            return 0 if student_answer != correct_answer else 100, "AI 튜터 연결에 실패했습니다. 기본 채점 결과만 제공됩니다."
         
-    Returns:
-        tuple: (점수, 피드백) - 점수는 0~100 사이의 정수, 피드백은 문자열
-    """
-    try:
-        client = get_openai_client()
-        if not client:
-            return None, "API 연결 오류로 채점을 완료할 수 없습니다."
+        # OpenAI API 키 설정
+        openai.api_key = st.secrets["OPENAI_API_KEY"]
         
         # 프롬프트 구성
         prompt = f"""
-        ## 문제
-        {problem_content}
-        
-        ## 학생 답안
+        [문제]
+        {question}
+
+        [학생 답안]
         {student_answer}
-        
-        ## 정답
+
+        [정답]
         {correct_answer}
-        
-        ## 문제 해설
+
+        [해설]
         {explanation}
-        
-        ---
-        
-        위 정보를 바탕으로 학생의 답안을 채점하고 교육적인 피드백을 제공해주세요.
-        학생이 선택한 답안이 정답과 일치하면 100점, 그렇지 않으면 0점을 부여합니다.
-        점수와 함께 학생에게 도움이 될 구체적인 설명을 포함하세요.
-        
-        응답 형식:
-        점수: [0 또는 100]
-        피드백: [학생을 위한 교육적인 피드백]
+
+        위 정보를 바탕으로 다음 작업을 수행해주세요:
+        1. 학생의 답안이 정답인지 판단 (100점 또는 0점)
+        2. 학생의 이해도를 파악하여 친절하고 자세한 피드백 제공
+        3. 오답인 경우, 왜 틀렸는지 구체적으로 설명하고 학습 방향 제시
+        4. 정답인 경우에도 개념을 더 깊이 이해할 수 있는 추가 설명 제공
+
+        다음 형식으로 출력해주세요:
+        점수: [점수]
+        피드백: [피드백 내용]
         """
-        
-        # GPT API 호출
-        response = client.chat.completions.create(
+
+        # API 호출
+        response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
-            messages=[{"role": "system", "content": "당신은 학생들에게 도움이 되는 교육적인 피드백을 제공하는 영어 교사입니다."},
-                      {"role": "user", "content": prompt}],
-            temperature=0.5,
-            max_tokens=500
+            messages=[
+                {"role": "system", "content": "당신은 학생들의 답안을 채점하고 친절한 피드백을 제공하는 AI 튜터입니다."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=1000,
+            request_timeout=30
         )
+
+        # 응답 파싱
+        output = response.choices[0].message.content.strip()
         
-        # 응답 텍스트 추출
-        response_text = response.choices[0].message.content.strip()
+        try:
+            # 점수와 피드백 분리
+            score_line = [line for line in output.split('\n') if line.startswith('점수:')][0]
+            score = 100 if '100' in score_line else 0
+            
+            feedback_lines = [line for line in output.split('\n') if not line.startswith('점수:')]
+            feedback = '\n'.join(feedback_lines).replace('피드백:', '').strip()
+            
+            return score, feedback
+            
+        except Exception as parse_error:
+            # 응답 파싱 실패 시 기본 응답 생성
+            if student_answer == correct_answer:
+                return 100, "정답입니다! 해설을 읽고 개념을 더 깊이 이해해보세요."
+            else:
+                return 0, "틀렸습니다. 해설을 잘 읽고 다시 한 번 풀어보세요."
         
-        # 점수와 피드백 분리
-        lines = response_text.split('\n')
-        score_line = next((line for line in lines if line.startswith('점수:')), None)
-        
-        if score_line:
-            # 점수 추출 및 정수로 변환
-            try:
-                score = int(score_line.split(':')[1].strip())
-            except:
-                score = 100 if student_answer == correct_answer else 0
+    except openai.error.RateLimitError:
+        # API 사용량 초과
+        if student_answer == correct_answer:
+            return 100, "정답입니다! (AI 서버가 혼잡하여 상세 피드백은 잠시 후에 확인해주세요)"
         else:
-            score = 100 if student_answer == correct_answer else 0
+            return 0, "틀렸습니다. (AI 서버가 혼잡하여 상세 피드백은 잠시 후에 확인해주세요)"
         
-        # 피드백 추출 (점수 라인 이후의 모든 텍스트)
-        feedback_start = next((i for i, line in enumerate(lines) if line.startswith('피드백:')), None)
-        
-        if feedback_start is not None:
-            feedback = '\n'.join(lines[feedback_start:]).replace('피드백:', '').strip()
+    except openai.error.AuthenticationError:
+        # 인증 오류
+        if student_answer == correct_answer:
+            return 100, "정답입니다! (AI 튜터 연결에 문제가 있어 기본 채점 결과만 제공됩니다)"
         else:
-            feedback = '\n'.join(lines).strip()
+            return 0, "틀렸습니다. (AI 튜터 연결에 문제가 있어 기본 채점 결과만 제공됩니다)"
         
-        return score, feedback
+    except openai.error.APIError:
+        # API 오류
+        if student_answer == correct_answer:
+            return 100, "정답입니다! (일시적인 오류로 기본 채점 결과만 제공됩니다)"
+        else:
+            return 0, "틀렸습니다. (일시적인 오류로 기본 채점 결과만 제공됩니다)"
         
     except Exception as e:
-        st.error(f"GPT 피드백 생성 오류: {e}")
-        # 오류 발생 시 기본 피드백 제공
+        # 기타 오류
         if student_answer == correct_answer:
-            return 100, "정답입니다! 더 자세한 피드백은 현재 제공할 수 없습니다."
+            return 100, "정답입니다! (피드백 생성에 실패하여 기본 채점 결과만 제공됩니다)"
         else:
-            return 0, f"오답입니다. 정답은 {correct_answer}입니다. 더 자세한 피드백은 현재 제공할 수 없습니다." 
+            return 0, "틀렸습니다. (피드백 생성에 실패하여 기본 채점 결과만 제공됩니다)" 

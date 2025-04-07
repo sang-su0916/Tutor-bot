@@ -8,7 +8,12 @@ st.set_page_config(
     page_title="GPT 학습 피드백 (우리 학원 전용 튜터)",
     page_icon="🧠",
     layout="centered",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
+    menu_items={
+        'Get Help': None,
+        'Report a bug': None,
+        'About': None
+    }
 )
 
 # 세션 상태 초기화
@@ -49,7 +54,16 @@ def problem_page():
     if not st.session_state.current_problem or st.session_state.submitted:
         with st.spinner("문제를 불러오는 중..."):
             try:
+                # 이전 문제 정보 저장
+                previous_problem = st.session_state.current_problem if hasattr(st.session_state, 'current_problem') else None
+                
+                # 새 문제 가져오기
                 problem = get_random_problem()
+                
+                # 문제가 이전 문제와 같은지 확인
+                if previous_problem and problem and problem["문제ID"] == previous_problem["문제ID"]:
+                    problem = get_random_problem()
+                
                 if problem:
                     st.session_state.current_problem = problem
                     st.session_state.submitted = False
@@ -57,18 +71,22 @@ def problem_page():
                     st.session_state.score = None
                     st.session_state.show_result = False
                 else:
-                    st.error("문제를 불러오는데 실패했습니다. 잠시 후 다시 시도해주세요.")
+                    st.error("문제를 불러오는데 실패했습니다.")
                     return
             except Exception as e:
-                st.error(f"문제를 불러오는데 오류가 발생했습니다: {e}")
+                st.error("문제를 불러오는데 실패했습니다.")
                 return
     
     problem = st.session_state.current_problem
     
+    # 문제 정보 표시
+    st.markdown(f"**과목**: {problem['과목']} | **학년**: {problem['학년']} | **유형**: {problem['문제유형']} | **난이도**: {problem['난이도']}")
+    
+    # 문제 내용
     st.subheader("문제")
     st.markdown(problem.get("문제내용", "문제 내용을 불러올 수 없습니다."))
     
-    # 5개의 보기 중 존재하는 것만 표시
+    # 보기 준비
     options = []
     for i in range(1, 6):
         option_key = f"보기{i}"
@@ -76,16 +94,21 @@ def problem_page():
             options.append((option_key, problem[option_key]))
     
     with st.form("answer_form"):
+        # 보기를 라디오 버튼으로 표시
         selected_option = st.radio(
             "정답을 선택하세요:",
             options=options,
-            format_func=lambda x: f"{x[0]}: {x[1]}"
+            format_func=lambda x: f"{x[0]}: {x[1]}",
+            key=f"answer_radio_{problem['문제ID']}"  # 문제별 고유 키 사용
         )
         
-        submit_button = st.form_submit_button("제출하기")
+        # 제출 버튼
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            submit_button = st.form_submit_button("정답 제출하기")
         
         if submit_button:
-            with st.spinner("답안을 채점하는 중..."):
+            with st.spinner("채점 중..."):
                 try:
                     # 학생이 선택한 답변 (보기1, 보기2 등)
                     student_answer = selected_option[0]
@@ -116,7 +139,7 @@ def problem_page():
                     
                     st.rerun()
                 except Exception as e:
-                    st.error(f"채점 중 오류가 발생했습니다: {e}")
+                    st.error("채점 중 오류가 발생했습니다.")
 
 def result_page():
     """결과 페이지"""
@@ -124,32 +147,50 @@ def result_page():
     
     problem = st.session_state.current_problem
     
+    # 문제 정보 표시
+    st.markdown(f"**과목**: {problem['과목']} | **학년**: {problem['학년']} | **유형**: {problem['문제유형']} | **난이도**: {problem['난이도']}")
+    
+    # 문제 내용
     st.subheader("문제")
     st.markdown(problem.get("문제내용", "문제 내용을 불러올 수 없습니다."))
     
+    # 정답과 점수
     col1, col2 = st.columns(2)
     with col1:
-        st.info(f"**정답**: {problem.get('정답', '정보 없음')}")
+        st.info(f"**정답**: {problem.get('정답', '')}")
     
     with col2:
-        if st.session_state.score == 100:
-            st.success(f"**점수**: {st.session_state.score}점")
+        score = st.session_state.score
+        if score is None:
+            st.error("**점수**: 채점 중 오류가 발생했습니다.")
+        elif score == 100:
+            st.success("**점수**: 100점")
         else:
-            st.error(f"**점수**: {st.session_state.score}점")
+            st.error(f"**점수**: {score}점")
     
-    st.subheader("해설")
-    st.markdown(problem.get("해설", "해설을 불러올 수 없습니다."))
+    # 해설과 피드백
+    st.subheader("문제 해설")
+    st.markdown(problem.get("해설", ""))
     
     st.subheader("AI 튜터 피드백")
-    st.markdown(st.session_state.feedback)
+    feedback = st.session_state.feedback
+    if feedback:
+        st.markdown(feedback)
+    else:
+        st.warning("피드백을 생성하는 중 오류가 발생했습니다.")
     
-    col1, col2 = st.columns(2)
+    # 키워드 표시
+    if "키워드" in problem and problem["키워드"]:
+        st.markdown(f"**학습 키워드**: {problem['키워드']}")
+    
+    # 버튼
+    col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
         if st.button("다음 문제"):
             st.session_state.current_problem = None
             st.rerun()
     
-    with col2:
+    with col3:
         show_logout()
 
 def show_logout():
@@ -162,10 +203,27 @@ def show_logout():
 
 def main():
     """메인 함수"""
-    # 사이드바 정보
-    with st.sidebar:
-        st.title("GPT 학습 피드백")
-        st.info("이 앱은 학습 문제를 풀고 AI 튜터로부터 피드백을 받을 수 있는 웹 애플리케이션입니다.")
+    # CSS로 디버그 정보 숨기기
+    hide_streamlit_style = """
+        <style>
+            #MainMenu {visibility: hidden;}
+            footer {visibility: hidden;}
+            .stDeployButton {display:none;}
+            div[data-testid="stToolbar"] {visibility: hidden;}
+            div[data-testid="stDecoration"] {visibility: hidden;}
+            div[data-testid="stStatusWidget"] {visibility: hidden;}
+            div[data-testid="stHeader"] {visibility: hidden;}
+            div.block-container {padding-top: 0rem;}
+            div.block-container {padding-bottom: 0rem;}
+            div[data-testid="stAppViewContainer"] > section:first-child {padding-top: 1rem;}
+            div[data-testid="stVerticalBlock"] {gap: 1rem;}
+            div[data-testid="stConnectionStatus"] {visibility: hidden;}
+            div[data-testid="stSpinner"] {visibility: hidden;}
+            div[data-testid="stDebugElement"] {visibility: hidden;}
+            div[data-testid="stMarkdownContainer"] > div > p {margin-bottom: 0.5rem;}
+        </style>
+    """
+    st.markdown(hide_streamlit_style, unsafe_allow_html=True)
     
     # 로그인 상태에 따라 페이지 표시
     if not st.session_state.student_id:
