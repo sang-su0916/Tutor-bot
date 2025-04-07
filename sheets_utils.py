@@ -48,29 +48,33 @@ def connect_to_sheets():
                             answers_ws = sheet.worksheet("student_answers")
                             # student_answers 워크시트 헤더 확인
                             headers = answers_ws.row_values(1)
-                            if not headers or len(headers) < 7:
-                                # 헤더 설정
-                                answers_ws.clear()
-                                answers_ws.append_row([
-                                    "student_id",
-                                    "student_name",
-                                    "problem_id",
-                                    "submitted_answer",
-                                    "score",
-                                    "feedback",
-                                    "timestamp"
-                                ])
+                            expected_headers = [
+                                "학생ID",
+                                "이름",
+                                "문제ID",
+                                "제출답안",
+                                "점수",
+                                "피드백",
+                                "제출시간"
+                            ]
+                            
+                            # 헤더가 비어있거나 예상 헤더와 다른 경우에만 초기화
+                            if not headers:
+                                st.warning("student_answers 워크시트에 헤더가 없습니다. 헤더를 추가합니다.")
+                                answers_ws.append_row(expected_headers)
+                            
                         except gspread.exceptions.WorksheetNotFound:
                             # student_answers 워크시트 생성
+                            st.info("student_answers 워크시트를 생성합니다.")
                             answers_ws = sheet.add_worksheet("student_answers", 1000, 7)
                             answers_ws.append_row([
-                                "student_id",
-                                "student_name",
-                                "problem_id",
-                                "submitted_answer",
-                                "score",
-                                "feedback",
-                                "timestamp"
+                                "학생ID",
+                                "이름",
+                                "문제ID",
+                                "제출답안",
+                                "점수",
+                                "피드백",
+                                "제출시간"
                             ])
                         
                         st.success("Google Sheets 연결 성공!")
@@ -188,17 +192,18 @@ def save_student_answer(student_id, student_name, problem_id, submitted_answer, 
             
             # 저장할 데이터
             row_data = [
-                student_id,
-                student_name,
-                problem_id,
-                submitted_answer,
-                score,
-                feedback,
-                current_time
+                student_id,          # 학생ID
+                student_name,        # 이름
+                problem_id,          # 문제ID
+                submitted_answer,    # 제출답안
+                score,              # 점수
+                feedback,           # 피드백
+                current_time        # 제출시간
             ]
             
             # 데이터 추가
             worksheet.append_row(row_data)
+            st.success("답안이 성공적으로 저장되었습니다!")
             return True
         except Exception as e:
             st.error(f"워크시트 접근 오류: {e}. 로컬에만 저장합니다.")
