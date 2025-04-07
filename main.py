@@ -13,6 +13,7 @@ try:
     from sheets_utils import connect_to_sheets, get_random_problem, save_student_answer
     from gpt_feedback import generate_feedback
     import admin  # 관리자 모듈 추가
+    from student_analytics import get_problem_for_student, update_problem_stats, show_student_performance_dashboard  # 취약점 분석 모듈 추가
 except ImportError as e:
     st.error(f"모듈을 불러올 수 없습니다: {e}")
     
@@ -43,6 +44,15 @@ except ImportError as e:
             return 100, "정답입니다! 해설을 읽고 개념을 더 깊이 이해해보세요."
         else:
             return 0, "틀렸습니다. 해설을 잘 읽고 다시 한 번 풀어보세요."
+    
+    def get_problem_for_student(student_id, available_problems):
+        return get_random_problem()
+    
+    def update_problem_stats(student_id, problem_id, keywords, is_correct):
+        return True
+    
+    def show_student_performance_dashboard(student_id, student_name, grade, level):
+        st.info("학생 성적 대시보드를 표시할 수 없습니다.")
 
 # 페이지 설정
 st.set_page_config(
@@ -109,6 +119,7 @@ def intro_page():
     이 시스템은 학생들의 학습을 도와주는 AI 기반 피드백 시스템입니다.
     - 학생들은 개인화된 문제를 풀고 즉각적인 피드백을 받을 수 있습니다.
     - 교사들은 학생들의 진도와 성적을 관리할 수 있습니다.
+    - 취약점 분석을 통해 학생별 맞춤형 문제가 제공됩니다.
     """)
 
 def student_login_page():
@@ -161,7 +172,7 @@ def student_login_page():
                                 st.session_state.score = None
                                 st.session_state.previous_problems = set()
                                 st.session_state.current_round = 1
-                                st.session_state.page = "problem"
+                                st.session_state.page = "student_dashboard"
                                 
                                 st.rerun()
                     else:
@@ -214,14 +225,48 @@ def manual_login():
             st.session_state.score = None
             st.session_state.previous_problems = set()
             st.session_state.current_round = 1
-            st.session_state.page = "problem"
+            st.session_state.page = "student_dashboard"
             
             st.rerun()
 
+def student_dashboard():
+    """학생 대시보드 페이지"""
+    st.title(f"환영합니다, {st.session_state.student_name}님!")
+    st.markdown(f"**학년**: {st.session_state.student_grade} | **실력등급**: {st.session_state.student_level}")
+    
+    # 두 개의 메인 옵션 제공
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("📝 문제 풀기", use_container_width=True):
+            st.session_state.page = "problem"
+            st.rerun()
+    
+    with col2:
+        if st.button("📊 나의 성적 분석", use_container_width=True):
+            st.session_state.page = "my_performance"
+            st.rerun()
+    
+    # 로그아웃 버튼
+    if st.button("로그아웃", key="logout_dashboard_btn"):
+        # 세션 상태 초기화
+        for key in list(st.session_state.keys()):
+            if key != "initialized" and key != "page":
+                del st.session_state[key]
+        st.session_state.page = "intro"
+        st.rerun()
+
 def problem_page():
     """문제 페이지"""
-    st.title(f"안녕하세요, {st.session_state.student_name}님!")
-    st.markdown(f"**학년**: {st.session_state.student_grade} | **실력등급**: {st.session_state.student_level}")
+    st.title(f"문제 풀기")
+    st.markdown(f"**학생**: {st.session_state.student_name} | **학년**: {st.session_state.student_grade} | **실력등급**: {st.session_state.student_level}")
+    
+    # 두 개의 버튼 추가 - 대시보드로 돌아가기와 로그아웃
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        if st.button("← 대시보드", key="back_to_dashboard_btn"):
+            st.session_state.page = "student_dashboard"
+            st.rerun()
     
     # 처음 페이지가 로드될 때 또는 다음 문제 버튼을 눌렀을 때 문제를 가져옴
     if not st.session_state.current_problem or st.session_state.submitted:
@@ -230,8 +275,36 @@ def problem_page():
                 # 이전 문제 정보 저장
                 previous_problem = st.session_state.current_problem if hasattr(st.session_state, 'current_problem') else None
                 
-                # 새 문제 가져오기
-                problem = get_random_problem()
+                # 기본 문제 가져오기
+                try:
+                    # 학생 취약점 기반 문제 추천
+                    problem = None
+                    if hasattr(st.session_state, 'student_id'):
+                        # 문제 목록 가져오기
+                        sheet = connect_to_sheets()
+                        if sheet:
+                            try:
+                                worksheet = sheet.worksheet("problems")
+                                all_problems = worksheet.get_all_records()
+                                if all_problems:
+                                    # 학생 수준에 맞는 문제 필터링
+                                    student_grade = st.session_state.student_grade
+                                    available_problems = [p for p in all_problems if p["학년"] == student_grade]
+                                    
+                                    if available_problems:
+                                        # 학생 취약점 기반 문제 추천
+                                        problem = get_problem_for_student(
+                                            st.session_state.student_id,
+                                            available_problems
+                                        )
+                            except:
+                                pass
+                    
+                    # 추천 실패시 랜덤 문제 가져오기
+                    if not problem:
+                        problem = get_random_problem()
+                except:
+                    problem = get_random_problem()
                 
                 # 문제가 이전 문제와 같은지 확인
                 if previous_problem and problem and problem["문제ID"] == previous_problem["문제ID"]:
@@ -369,18 +442,32 @@ def problem_page():
                         feedback
                     )
                     
+                    # 학생 취약점 업데이트
+                    is_correct = (score == 100)
+                    update_problem_stats(
+                        st.session_state.student_id,
+                        problem.get("문제ID", ""),
+                        problem.get("키워드", ""),
+                        is_correct
+                    )
+                    
                     st.rerun()
                 except Exception as e:
                     st.error(f"채점 중 오류가 발생했습니다.")
-    
-    # 로그아웃 버튼
-    if st.button("로그아웃", key="logout_problem_btn"):
-        # 세션 상태 초기화
-        for key in list(st.session_state.keys()):
-            if key != "initialized" and key != "page":
-                del st.session_state[key]
-        st.session_state.page = "intro"
+
+def my_performance_page():
+    """학생 성적 분석 페이지"""
+    if st.button("← 대시보드", key="back_to_dashboard_from_performance"):
+        st.session_state.page = "student_dashboard"
         st.rerun()
+    
+    # 학생 성적 대시보드 표시
+    show_student_performance_dashboard(
+        st.session_state.student_id,
+        st.session_state.student_name,
+        st.session_state.student_grade,
+        st.session_state.student_level
+    )
 
 def result_page():
     """결과 페이지"""
@@ -471,7 +558,7 @@ def result_page():
     # 버튼들
     st.write("")  # 공백 추가
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("다음 문제", key="next_problem_btn", use_container_width=True):
             # 다음 문제를 위한 상태 초기화
@@ -483,12 +570,13 @@ def result_page():
             st.rerun()
     
     with col2:
-        if st.button("로그아웃", key="logout_btn", use_container_width=True):
-            # 세션 상태 초기화
-            for key in list(st.session_state.keys()):
-                if key != "initialized" and key != "page":
-                    del st.session_state[key]
-            st.session_state.page = "intro"
+        if st.button("나의 성적 분석", key="view_perf_btn", use_container_width=True):
+            st.session_state.page = "my_performance"
+            st.rerun()
+    
+    with col3:
+        if st.button("대시보드", key="to_dashboard_btn", use_container_width=True):
+            st.session_state.page = "student_dashboard"
             st.rerun()
 
 def main():
@@ -540,11 +628,15 @@ def main():
         admin.admin_main()
     elif st.session_state.page == "student_login":
         student_login_page()
+    elif st.session_state.page == "student_dashboard":
+        student_dashboard()
     elif st.session_state.page == "problem":
         if st.session_state.show_result:
             result_page()
         else:
             problem_page()
+    elif st.session_state.page == "my_performance":
+        my_performance_page()
     else:
         intro_page()
 
