@@ -279,7 +279,7 @@ def student_dashboard():
 
 def load_exam_problems():
     """학생 학년에 맞는 시험 문제 20개를 로드합니다."""
-    if 'exam_problems' not in st.session_state or not st.session_state.exam_problems:
+    if 'exam_problems' not in st.session_state or not st.session_state.exam_problems or len(st.session_state.exam_problems) < 20:
         st.session_state.exam_problems = []
         available_problems_all = []
         
@@ -297,6 +297,19 @@ def load_exam_problems():
                             student_grade = st.session_state.student_grade
                             available_problems_all = [p for p in all_problems if p["학년"] == student_grade]
                             
+                            # 문제가 없으면 더미 문제로 대체
+                            if not available_problems_all:
+                                # 기본 더미 문제 생성
+                                for i in range(20):
+                                    dummy_problem = get_random_problem()
+                                    # ID 생성 - 중복 방지를 위해 타임스탬프 추가
+                                    dummy_problem["문제ID"] = f"dummy-{uuid.uuid4()}"
+                                    # 학년 수정 - 학생 학년에 맞추기
+                                    dummy_problem["학년"] = student_grade
+                                    st.session_state.exam_problems.append(dummy_problem)
+                                
+                                return st.session_state.exam_problems
+                            
                             # 중복 처리를 위해 문제 ID 기준으로 중복 제거
                             unique_problem_ids = set()
                             available_problems = []
@@ -306,40 +319,42 @@ def load_exam_problems():
                                     unique_problem_ids.add(p["문제ID"])
                             
                             if available_problems:
-                                # 중복되지 않는 문제 20개 선택
-                                selected_problems = []
-                                used_problem_ids = set()  # 이미 선택된 문제 ID 추적
-                                max_attempts = 100  # 최대 시도 횟수
-                                
-                                # 필요한 문제 수만큼 반복
-                                for _ in range(min(20, len(available_problems))):
-                                    attempts = 0
-                                    selected = False
+                                # 사용 가능한 문제가 20개 미만이면 모두 사용
+                                if len(available_problems) <= 20:
+                                    st.session_state.exam_problems = available_problems
+                                else:
+                                    # 중복되지 않는 문제 20개 선택
+                                    selected_problems = []
+                                    used_problem_ids = set()  # 이미 선택된 문제 ID 추적
                                     
-                                    while attempts < max_attempts and not selected:
-                                        attempts += 1
-                                        
+                                    # 취약점 기반 문제 5개 선택
+                                    for _ in range(min(5, len(available_problems))):
                                         # 취약점 기반 문제 추천
-                                        problem = get_problem_for_student(
-                                            st.session_state.student_id,
-                                            available_problems
-                                        )
-                                        
-                                        # 이미 선택된 문제가 아닌지 확인
-                                        if problem and problem["문제ID"] not in used_problem_ids:
-                                            selected_problems.append(problem)
-                                            used_problem_ids.add(problem["문제ID"])
-                                            selected = True
-                                    
-                                    # 시도 횟수 초과시 랜덤하게 선택
-                                    if not selected and available_problems:
-                                        for p in available_problems:
-                                            if p["문제ID"] not in used_problem_ids:
-                                                selected_problems.append(p)
-                                                used_problem_ids.add(p["문제ID"])
+                                        for attempt in range(10):  # 최대 10번 시도
+                                            problem = get_problem_for_student(
+                                                st.session_state.student_id,
+                                                available_problems
+                                            )
+                                            
+                                            # 이미 선택된 문제가 아닌지 확인
+                                            if problem and problem["문제ID"] not in used_problem_ids:
+                                                selected_problems.append(problem)
+                                                used_problem_ids.add(problem["문제ID"])
                                                 break
-                                
-                                st.session_state.exam_problems = selected_problems
+                                    
+                                    # 나머지 문제는 랜덤 선택
+                                    remaining_problems = [p for p in available_problems if p["문제ID"] not in used_problem_ids]
+                                    import random
+                                    random.shuffle(remaining_problems)
+                                    
+                                    # 20개가 될 때까지 추가
+                                    for problem in remaining_problems:
+                                        if len(selected_problems) >= 20:
+                                            break
+                                        selected_problems.append(problem)
+                                        used_problem_ids.add(problem["문제ID"])
+                                    
+                                    st.session_state.exam_problems = selected_problems
                     except Exception as e:
                         st.error(f"문제 로드 중 오류 발생: {str(e)}")
         except Exception as e:
@@ -347,15 +362,46 @@ def load_exam_problems():
         
         # 문제가 부족하면 더미 문제로 채우기
         while len(st.session_state.exam_problems) < 20:
-            dummy_problem = get_random_problem()
-            # ID 생성 - 중복 방지를 위해 타임스탬프 추가
-            dummy_problem["문제ID"] = f"dummy-{uuid.uuid4()}"
+            dummy_problem = {
+                "문제ID": f"dummy-{uuid.uuid4()}",
+                "과목": "영어",
+                "학년": st.session_state.get("student_grade", "중학교 1학년"),
+                "문제유형": "객관식",
+                "난이도": "중",
+                "문제내용": f"Choose the correct verb form to complete the sentence: The students ___ their homework.",
+                "보기1": "do",
+                "보기2": "does",
+                "보기3": "doing",
+                "보기4": "done",
+                "보기5": "did",
+                "정답": "보기1",
+                "키워드": "동사 활용",
+                "해설": "주어가 복수 명사(students)이므로 현재 시제의 'do'가 정답입니다."
+            }
+            
+            # 더미 문제 내용 변형 (중복 방지)
+            import random
+            
+            # 주어/문장 패턴 다양화
+            subjects = ["The students", "They", "The teachers", "We", "The children", "My friends"]
+            verbs = ["write", "read", "finish", "complete", "submit", "prepare", "study for"]
+            objects = ["homework", "assignments", "tests", "exams", "projects", "essays", "presentations"]
+            
+            # 랜덤 문장 생성
+            subject = random.choice(subjects)
+            verb = random.choice(verbs)
+            obj = random.choice(objects)
+            
+            dummy_problem["문제내용"] = f"Choose the correct verb form to complete the sentence: {subject} ___ {obj} every day."
+            
             # 학년 수정 - 학생 학년에 맞추기
             if hasattr(st.session_state, 'student_grade'):
                 dummy_problem["학년"] = st.session_state.student_grade
+                
             st.session_state.exam_problems.append(dummy_problem)
     
-    return st.session_state.exam_problems
+    # 항상 최대 20개만 반환 (혹시 20개 이상인 경우)
+    return st.session_state.exam_problems[:20]
 
 def exam_page():
     """시험 페이지 - 20문제를 한 페이지에 모두 표시"""
@@ -412,72 +458,75 @@ def exam_page():
         st.rerun()
     
     # 문제 로드
-    problems = load_exam_problems()
+    with st.spinner("문제를 불러오는 중..."):
+        problems = load_exam_problems()
     
-    if not problems:
-        st.error("문제를 불러오는데 실패했습니다.")
-        return
+    if not problems or len(problems) < 20:
+        st.warning(f"시스템에서 학년에 맞는 문제를 충분히 찾지 못했습니다. 시험은 일부 기본 문제로 대체됩니다.")
     
     # 문제 수 확인 및 표시
     st.info(f"총 {len(problems)}개의 문제가 있습니다. 모든 문제를 풀고 제출하세요.")
     
-    # 문제 폼 - 모든 문제를 한 페이지에 표시
-    with st.form(key="exam_form"):
-        for idx, problem in enumerate(problems, 1):
-            with st.container(border=True):
-                st.markdown(f"### 문제 {idx}/20")
-                st.markdown(f"**과목**: {problem['과목']} | **학년**: {problem['학년']} | **유형**: {problem['문제유형']} | **난이도**: {problem['난이도']}")
-                
-                # 문제 내용
-                st.markdown(problem.get("문제내용", "문제 내용을 불러올 수 없습니다."))
-                
-                # 보기가 있는지 확인
-                has_options = False
-                options = []
-                seen_options_text = set()  # 중복 보기 텍스트 추적
-                
-                for i in range(1, 6):
-                    option_key = f"보기{i}"
-                    if option_key in problem and problem[option_key] and problem[option_key].strip():
-                        option_text = problem[option_key].strip()
-                        
-                        # 중복된 보기 텍스트 건너뛰기
-                        if option_text not in seen_options_text:
-                            has_options = True
-                            options.append((option_key, option_text))
-                            seen_options_text.add(option_text)
-                
-                # 문제 ID를 키로 사용
-                problem_id = problem['문제ID']
-                answer_key = f"answer_{problem_id}"
-                
-                if has_options:
-                    # 객관식 문제
-                    selected_option = st.radio(
-                        "정답 선택:",
-                        options=options,
-                        format_func=lambda x: f"{x[0]}: {x[1]}",
-                        key=f"radio_{problem_id}",
-                        index=None
-                    )
-                    
-                    if selected_option:
-                        st.session_state[answer_key] = selected_option[0]
-                else:
-                    # 주관식 문제
-                    text_answer = st.text_input(
-                        "답 입력:",
-                        key=f"text_{problem_id}",
-                        value=st.session_state.get(f"text_{problem_id}", "")
-                    )
-                    if text_answer.strip():
-                        st.session_state[answer_key] = text_answer.strip()
-        
-        # 제출 버튼
-        submit_button = st.form_submit_button("시험지 제출하기", use_container_width=True)
+    # 버튼을 상단에도 표시
+    if st.button("시험지 제출하기", use_container_width=True, key="submit_top"):
+        # 모든 답변 제출
+        st.session_state.exam_completed = True
+        st.session_state.page = "exam_result"
+        st.rerun()
     
-    # 제출 처리
-    if submit_button:
+    # 문제 폼 - 모든 문제를 한 페이지에 표시
+    for idx, problem in enumerate(problems, 1):
+        with st.container(border=True):
+            st.markdown(f"### 문제 {idx}/20")
+            st.markdown(f"**과목**: {problem['과목']} | **학년**: {problem['학년']} | **유형**: {problem['문제유형']} | **난이도**: {problem['난이도']}")
+            
+            # 문제 내용
+            st.markdown(problem.get("문제내용", "문제 내용을 불러올 수 없습니다."))
+            
+            # 보기가 있는지 확인
+            has_options = False
+            options = []
+            seen_options_text = set()  # 중복 보기 텍스트 추적
+            
+            for i in range(1, 6):
+                option_key = f"보기{i}"
+                if option_key in problem and problem[option_key] and problem[option_key].strip():
+                    option_text = problem[option_key].strip()
+                    
+                    # 중복된 보기 텍스트 건너뛰기
+                    if option_text not in seen_options_text:
+                        has_options = True
+                        options.append((option_key, option_text))
+                        seen_options_text.add(option_text)
+            
+            # 문제 ID를 키로 사용
+            problem_id = problem['문제ID']
+            answer_key = f"answer_{problem_id}"
+            
+            if has_options:
+                # 객관식 문제
+                selected_option = st.radio(
+                    "정답 선택:",
+                    options=options,
+                    format_func=lambda x: f"{x[0]}: {x[1]}",
+                    key=f"radio_{problem_id}",
+                    index=None
+                )
+                
+                if selected_option:
+                    st.session_state[answer_key] = selected_option[0]
+            else:
+                # 주관식 문제
+                text_answer = st.text_input(
+                    "답 입력:",
+                    key=f"text_{problem_id}",
+                    value=st.session_state.get(f"text_{problem_id}", "")
+                )
+                if text_answer.strip():
+                    st.session_state[answer_key] = text_answer.strip()
+    
+    # 제출 버튼
+    if st.button("시험지 제출하기", use_container_width=True, key="submit_bottom"):
         # 모든 답변 저장
         for problem in problems:
             problem_id = problem['문제ID']
