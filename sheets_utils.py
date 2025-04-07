@@ -130,66 +130,77 @@ def get_random_problem():
     try:
         sheet = connect_to_sheets()
         if not sheet:
-            # 가짜 문제 데이터 반환
-            dummy_problems = [
-                {
-                    "문제ID": "dummy-1",
-                    "문제내용": "What is the correct form of the verb 'write' in the present perfect tense?",
-                    "보기1": "having written",
-                    "보기2": "has wrote",
-                    "보기3": "has written",
-                    "보기4": "have been writing",
-                    "보기5": "had written",
-                    "정답": "보기3",
-                    "해설": "Present perfect tense는 'have/has + past participle' 형태로, 'write'의 past participle은 'written'입니다."
-                },
-                {
-                    "문제ID": "dummy-2",
-                    "문제내용": "Choose the correct sentence with the appropriate use of articles.",
-                    "보기1": "I saw an unicorn in the forest yesterday.",
-                    "보기2": "She is the best student in an class.",
-                    "보기3": "He bought a new car, and the car is red.",
-                    "보기4": "We had the dinner at restaurant last night.",
-                    "보기5": "I need a advice about this problem.",
-                    "정답": "보기3",
-                    "해설": "관사 사용에서 'an'은 모음 소리로 시작하는 단어 앞에, 'a'는 자음 소리로 시작하는 단어 앞에 사용됩니다. 특정 대상을 지칭할 때 'the'를 사용합니다."
-                },
-                {
-                    "문제ID": "dummy-3",
-                    "문제내용": "Which option contains the correct comparative and superlative forms of the adjective 'good'?",
-                    "보기1": "good, gooder, goodest",
-                    "보기2": "good, better, best",
-                    "보기3": "good, more good, most good",
-                    "보기4": "well, better, best",
-                    "보기5": "good, well, best",
-                    "정답": "보기2",
-                    "해설": "'good'의 비교급은 'better', 최상급은 'best'입니다. 이는 불규칙 형용사로 'more good'이나 'most good' 형태로 변화하지 않습니다."
-                }
-            ]
-            return random.choice(dummy_problems)
+            st.error("Google Sheets 연결 실패")
+            return get_dummy_problem()
         
         try:
             # '문제' 워크시트 열기
             worksheet = sheet.worksheet("problems")
             
-            # 모든 문제 데이터 가져오기
-            all_data = worksheet.get_all_records()
+            try:
+                # 모든 문제 데이터 가져오기
+                all_data = worksheet.get_all_records()
+                
+                # 데이터 확인 및 처리
+                if not all_data:
+                    st.warning("문제 데이터가 없습니다.")
+                    return get_dummy_problem()
+                
+                # 데이터 구조 확인
+                st.info(f"가져온 문제 수: {len(all_data)}")
+                if len(all_data) > 0:
+                    st.info(f"문제 데이터 구조: {list(all_data[0].keys())}")
+                
+                # 필수 필드 확인
+                required_fields = ["문제ID", "문제내용", "보기1", "보기2", "보기3", "보기4", "보기5", "정답", "해설"]
+                for problem in all_data:
+                    missing_fields = [field for field in required_fields if field not in problem or not problem[field]]
+                    if missing_fields:
+                        continue
+                    
+                # 유효한 문제만 필터링
+                valid_problems = [p for p in all_data if all(field in p and p[field] for field in required_fields)]
+                
+                if not valid_problems:
+                    st.warning("유효한 문제가 없습니다.")
+                    return get_dummy_problem()
+                
+                # 랜덤 문제 선택
+                random_problem = random.choice(valid_problems)
+                st.success("문제를 성공적으로 가져왔습니다!")
+                return random_problem
+                
+            except Exception as data_error:
+                st.error(f"데이터 처리 중 오류 발생: {str(data_error)}")
+                return get_dummy_problem()
+                
+        except Exception as ws_error:
+            st.error(f"워크시트 접근 오류: {str(ws_error)}")
+            return get_dummy_problem()
             
-            # 데이터가 없으면 가짜 데이터 반환
-            if not all_data:
-                st.warning("문제 데이터가 없습니다. 가짜 데이터를 사용합니다.")
-                return dummy_problems[0]
-            
-            # 랜덤 문제 선택
-            random_problem = random.choice(all_data)
-            return random_problem
-        except Exception as e:
-            st.error(f"워크시트 접근 오류: {e}. 가짜 데이터를 사용합니다.")
-            return dummy_problems[0]
-    
     except Exception as e:
-        st.error(f"문제 가져오기 오류: {e}")
-        return None
+        st.error(f"문제 가져오기 오류: {str(e)}")
+        return get_dummy_problem()
+
+def get_dummy_problem():
+    """
+    더미 문제를 반환합니다.
+    """
+    dummy_problems = [
+        {
+            "문제ID": "dummy-1",
+            "문제내용": "Choose the correct sentence with the appropriate use of articles.",
+            "보기1": "I saw an unicorn in the forest yesterday.",
+            "보기2": "She is the best student in an class.",
+            "보기3": "He bought a new car, and the car is red.",
+            "보기4": "We had the dinner at restaurant last night.",
+            "보기5": "I need a advice about this problem.",
+            "정답": "보기3",
+            "해설": "관사 사용에서 'an'은 모음 소리로 시작하는 단어 앞에, 'a'는 자음 소리로 시작하는 단어 앞에 사용됩니다. 특정 대상을 지칭할 때 'the'를 사용합니다."
+        }
+    ]
+    st.warning("더미 문제를 사용합니다.")
+    return dummy_problems[0]
 
 def save_student_answer(student_id, student_name, problem_id, submitted_answer, score, feedback):
     """
