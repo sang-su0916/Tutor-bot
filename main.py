@@ -2,6 +2,7 @@ import streamlit as st
 import uuid
 import os
 import sys
+import time
 
 # 현재 디렉토리를 시스템 경로에 추가
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -251,7 +252,12 @@ def student_dashboard():
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("📝 문제 풀기", use_container_width=True):
+        if st.button("📝 문제 풀기 (20문제 / 50분)", use_container_width=True):
+            # 문제 풀기 세션 초기화
+            st.session_state.problem_count = 0
+            st.session_state.max_problems = 20
+            st.session_state.start_time = time.time()
+            st.session_state.time_limit = 50 * 60  # 50분(초 단위)
             st.session_state.page = "problem"
             st.rerun()
     
@@ -278,10 +284,54 @@ def problem_page():
             st.rerun()
         return
     
+    # 시간 제한 및 문제 수 체크
+    if 'start_time' not in st.session_state:
+        st.session_state.start_time = time.time()
+    
+    if 'problem_count' not in st.session_state:
+        st.session_state.problem_count = 0
+    
+    if 'max_problems' not in st.session_state:
+        st.session_state.max_problems = 20
+    
+    if 'time_limit' not in st.session_state:
+        st.session_state.time_limit = 50 * 60  # 50분(초 단위)
+    
+    # 현재 시간으로 경과 시간 계산
+    elapsed_time = time.time() - st.session_state.start_time
+    remaining_time = max(0, st.session_state.time_limit - elapsed_time)
+    
+    # 남은 시간 표시
+    mins, secs = divmod(int(remaining_time), 60)
+    time_str = f"{mins:02d}:{secs:02d}"
+    
+    # 제한 시간이 끝났는지 또는 최대 문제 수에 도달했는지 확인
+    if remaining_time <= 0 or st.session_state.problem_count >= st.session_state.max_problems:
+        st.success("시험이 종료되었습니다!")
+        st.markdown(f"**풀이한 문제 수**: {st.session_state.problem_count}/{st.session_state.max_problems}")
+        
+        if st.button("결과 확인", use_container_width=True):
+            st.session_state.page = "my_performance"
+            st.rerun()
+        
+        if st.button("대시보드로 돌아가기", use_container_width=True):
+            st.session_state.page = "student_dashboard"
+            st.rerun()
+        
+        return
+    
     st.title(f"문제 풀기")
+    
+    # 진행 상황 표시
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown(f"**문제**: {st.session_state.problem_count + 1}/{st.session_state.max_problems}")
+    with col2:
+        st.markdown(f"**남은 시간**: {time_str}")
+    
     st.markdown(f"**학생**: {st.session_state.get('student_name', '학생')} | **학년**: {st.session_state.get('student_grade', 'N/A')} | **실력등급**: {st.session_state.get('student_level', 'N/A')}")
     
-    # 두 개의 버튼 추가 - 대시보드로 돌아가기와 로그아웃
+    # 대시보드로 돌아가기 버튼
     col1, col2 = st.columns([1, 3])
     with col1:
         if st.button("← 대시보드", key="back_to_dashboard_btn"):
@@ -528,6 +578,21 @@ def result_page():
     # 문제 정보 표시
     st.markdown(f"**과목**: {problem['과목']} | **학년**: {problem['학년']} | **유형**: {problem['문제유형']} | **난이도**: {problem['난이도']}")
     
+    # 진행 상황 표시
+    if 'problem_count' in st.session_state and 'max_problems' in st.session_state:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f"**진행상황**: {st.session_state.problem_count}/{st.session_state.max_problems} 문제")
+            
+        with col2:
+            # 남은 시간 표시 (있는 경우)
+            if 'start_time' in st.session_state and 'time_limit' in st.session_state:
+                elapsed_time = time.time() - st.session_state.start_time
+                remaining_time = max(0, st.session_state.time_limit - elapsed_time)
+                mins, secs = divmod(int(remaining_time), 60)
+                time_str = f"{mins:02d}:{secs:02d}"
+                st.markdown(f"**남은 시간**: {time_str}")
+    
     # 문제 내용
     st.subheader("문제")
     st.markdown(problem.get("문제내용", "문제 내용을 불러올 수 없습니다."))
@@ -616,6 +681,11 @@ def result_page():
             st.session_state.feedback = None
             st.session_state.score = None
             st.session_state.show_result = False
+            
+            # 문제 카운트 증가
+            if 'problem_count' in st.session_state:
+                st.session_state.problem_count += 1
+                
             st.rerun()
     
     with col2:

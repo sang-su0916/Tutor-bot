@@ -275,16 +275,40 @@ def admin_login_page():
             if not username or not password:
                 st.error("아이디와 비밀번호를 입력해주세요.")
             else:
-                teacher = get_teacher_by_username(username)
-                if teacher and verify_password(teacher["비밀번호(해시)"], password):
-                    st.session_state.admin_logged_in = True
-                    st.session_state.admin_id = teacher["교사ID"]
-                    st.session_state.admin_name = teacher["이름"]
-                    st.session_state.admin_school = teacher["학교"]
-                    st.session_state.admin_username = teacher["사용자이름"]
-                    st.rerun()
-                else:
-                    st.error("아이디 또는 비밀번호가 일치하지 않습니다.")
+                try:
+                    teacher = get_teacher_by_username(username)
+                    if teacher and verify_password(teacher["비밀번호(해시)"], password):
+                        # 세션 상태 설정
+                        if "admin_logged_in" not in st.session_state:
+                            st.session_state.admin_logged_in = False
+                        st.session_state.admin_logged_in = True
+                        
+                        if "admin_id" not in st.session_state:
+                            st.session_state.admin_id = ""
+                        st.session_state.admin_id = teacher["교사ID"]
+                        
+                        if "admin_name" not in st.session_state:
+                            st.session_state.admin_name = ""
+                        st.session_state.admin_name = teacher["이름"]
+                        
+                        if "admin_school" not in st.session_state:
+                            st.session_state.admin_school = ""
+                        st.session_state.admin_school = teacher["학교"]
+                        
+                        if "admin_username" not in st.session_state:
+                            st.session_state.admin_username = ""
+                        st.session_state.admin_username = teacher["사용자이름"]
+                        
+                        if "admin_action" not in st.session_state:
+                            st.session_state.admin_action = "login"
+                        st.session_state.admin_action = "dashboard"
+                        
+                        st.rerun()
+                    else:
+                        st.error("아이디 또는 비밀번호가 일치하지 않습니다.")
+                except Exception as e:
+                    st.error(f"로그인 처리 중 오류가 발생했습니다: {str(e)}")
+                    st.info("아직 계정이 없다면 회원가입을 진행해주세요.")
 
 def admin_student_form(teacher_id, edit_mode=False, student_data=None):
     """학생 등록/수정 폼"""
@@ -526,16 +550,19 @@ def admin_main():
     </style>
     """, unsafe_allow_html=True)
     
+    # 세션 상태 초기화
+    if "admin_action" not in st.session_state:
+        st.session_state.admin_action = "login"
+    
+    if "admin_logged_in" not in st.session_state:
+        st.session_state.admin_logged_in = False
+    
     # 사이드바 로그아웃 버튼
     if st.session_state.get("admin_logged_in"):
         with st.sidebar:
             st.write(f"안녕하세요, {st.session_state.admin_name} 선생님!")
             if st.button("로그아웃", key="logout_btn"):
                 admin_logout()
-    
-    # 세션 상태 초기화
-    if "admin_action" not in st.session_state:
-        st.session_state.admin_action = "login"
     
     # 현재 액션에 따라 페이지 표시
     if st.session_state.admin_action == "signup":
