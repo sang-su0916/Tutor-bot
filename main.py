@@ -138,30 +138,48 @@ def problem_page():
     st.subheader("문제")
     st.markdown(problem.get("문제내용", "문제 내용을 불러올 수 없습니다."))
     
-    # 보기 준비
-    options = []
-    for i in range(1, 6):
-        option_key = f"보기{i}"
-        if option_key in problem and problem[option_key]:
-            options.append((option_key, problem[option_key]))
+    # 문제 유형 확인 (객관식 또는 단답형)
+    is_multiple_choice = "보기1" in problem and problem["보기1"]
     
     with st.form(key="answer_form"):
         st.write("정답을 선택하세요:")
-        # 보기를 라디오 버튼으로 표시
-        selected_option = st.radio(
-            label="",
-            options=options,
-            format_func=lambda x: f"{x[0]}: {x[1]}",
-            key=f"answer_radio_{problem['문제ID']}"  # 문제별 고유 키 사용
-        )
+        
+        # 학생 답변 변수 초기화
+        student_answer = None
+        
+        if is_multiple_choice:
+            # 객관식 문제: 보기를 라디오 버튼으로 표시
+            options = []
+            for i in range(1, 6):
+                option_key = f"보기{i}"
+                if option_key in problem and problem[option_key]:
+                    options.append((option_key, problem[option_key]))
+            
+            selected_option = st.radio(
+                label="",
+                options=options,
+                format_func=lambda x: f"{x[0]}: {x[1]}",
+                key=f"answer_radio_{problem['문제ID']}"
+            )
+            
+            # 학생이 선택한 답변 (보기1, 보기2 등)
+            student_answer = selected_option[0] if selected_option else None
+        else:
+            # 단답형 문제: 텍스트 입력 필드 표시
+            student_answer = st.text_input(
+                label="",
+                placeholder="답을 입력하세요",
+                key=f"answer_text_{problem['문제ID']}"
+            )
         
         # 제출 버튼
         submit_button = st.form_submit_button("정답 제출하기")
         
         if submit_button:
             try:
-                # 학생이 선택한 답변 (보기1, 보기2 등)
-                student_answer = selected_option[0]
+                if not student_answer:
+                    st.error("답을 입력하거나 선택해주세요.")
+                    return
                 
                 # GPT를 사용하여 채점 및 피드백 생성
                 score, feedback = generate_feedback(
