@@ -14,14 +14,30 @@ def connect_to_sheets():
         # Streamlit secrets에서 인증 정보 가져오기
         sheets_id = st.secrets["GSHEETS_ID"]
         
-        # 서비스 계정 인증 (service_account.json 파일 사용)
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name("service_account.json", scope)
-        client = gspread.authorize(creds)
-        
-        # 지정된 ID의 스프레드시트 열기
-        sheet = client.open_by_key(sheets_id)
-        return sheet
+        # 서비스 계정 인증 (TOML 설정에서 가져오기)
+        try:
+            # service_account.json 파일이 있는 경우
+            if os.path.exists("service_account.json"):
+                scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+                creds = ServiceAccountCredentials.from_json_keyfile_name("service_account.json", scope)
+            # Streamlit secrets의 gcp_service_account 설정을 사용
+            elif "gcp_service_account" in st.secrets:
+                service_account_info = st.secrets["gcp_service_account"]
+                service_account_info = dict(service_account_info)
+                scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+                creds = ServiceAccountCredentials.from_json_keyfile_dict(service_account_info, scope)
+            else:
+                st.error("서비스 계정 설정을 찾을 수 없습니다.")
+                return None
+            
+            client = gspread.authorize(creds)
+            
+            # 지정된 ID의 스프레드시트 열기
+            sheet = client.open_by_key(sheets_id)
+            return sheet
+        except Exception as e:
+            st.warning(f"서비스 계정 인증 오류: {e}")
+            return None
     
     except Exception as e:
         st.warning(f"Google Sheets 연결 오류: {e}. 가짜 데이터를 사용합니다.")
