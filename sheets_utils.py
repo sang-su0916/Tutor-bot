@@ -48,20 +48,26 @@ def connect_to_sheets():
                     try:
                         # 스프레드시트 존재 여부 확인
                         try:
+                            # 먼저 스프레드시트 목록 가져오기 시도
+                            all_sheets = client.list_spreadsheet_files()
+                            st.info(f"접근 가능한 스프레드시트 목록: {[sheet['name'] for sheet in all_sheets]}")
+                            
                             sheet = client.open_by_key(sheets_id)
+                            st.success("스프레드시트 연결 성공!")
                         except gspread.exceptions.APIError as e:
-                            if "404" in str(e):
+                            error_message = str(e)
+                            if "404" in error_message:
                                 st.error(f"스프레드시트를 찾을 수 없습니다. ID를 확인해주세요: {sheets_id}")
-                            elif "403" in str(e):
-                                st.error("권한이 없습니다. 스프레드시트 공유 설정을 확인해주세요.")
+                                st.info("1. 스프레드시트 ID가 올바른지 확인해주세요.")
+                                st.info("2. 서비스 계정에 스프레드시트가 공유되어 있는지 확인해주세요.")
+                            elif "403" in error_message:
+                                st.error("권한이 없습니다. 다음 사항을 확인해주세요:")
+                                st.info("1. Google Cloud Console에서 필요한 API가 활성화되어 있는지 확인")
+                                st.info("2. 스프레드시트가 서비스 계정과 공유되어 있는지 확인")
+                                st.info("3. 서비스 계정에 필요한 권한이 부여되어 있는지 확인")
                             else:
-                                st.error(f"API 오류: {str(e)}")
+                                st.error(f"API 오류: {error_message}")
                             return None
-                        
-                        # 연결 성공 시 워크시트 목록 확인
-                        worksheet_list = sheet.worksheets()
-                        st.success(f"연결된 워크시트: {[ws.title for ws in worksheet_list]}")
-                        return sheet
                     except gspread.exceptions.APIError as api_error:
                         st.error(f"Google Sheets API 오류: {str(api_error)}")
                         return None
