@@ -94,8 +94,24 @@ def login_page():
         submit_button = st.form_submit_button("로그인")
         
         if submit_button and student_name:
+            # 세션 상태 초기화
+            for key in list(st.session_state.keys()):
+                if key != "initialized":
+                    del st.session_state[key]
+                    
+            # 학생 정보 설정
             st.session_state.student_id = str(uuid.uuid4())
             st.session_state.student_name = student_name
+            st.session_state.submitted = False
+            st.session_state.show_result = False
+            
+            # 문제 관련 상태 초기화
+            st.session_state.current_problem = None
+            st.session_state.feedback = None
+            st.session_state.score = None
+            st.session_state.previous_problems = set()
+            st.session_state.current_round = 1
+            
             st.rerun()
 
 def problem_page():
@@ -122,6 +138,13 @@ def problem_page():
                     st.session_state.feedback = None
                     st.session_state.score = None
                     st.session_state.show_result = False
+                    
+                    # 문제 타입 저장
+                    st.session_state.is_multiple_choice = "보기1" in problem and problem["보기1"]
+                    
+                    # 학생 답변 초기화
+                    if "answer_text" in st.session_state:
+                        del st.session_state.answer_text
                 else:
                     st.error("문제를 불러오는데 실패했습니다.")
                     return
@@ -139,81 +162,97 @@ def problem_page():
     st.markdown(problem.get("문제내용", "문제 내용을 불러올 수 없습니다."))
     
     # 문제 유형 확인 (객관식 또는 단답형)
-    is_multiple_choice = "보기1" in problem and problem["보기1"]
+    is_multiple_choice = st.session_state.is_multiple_choice
     
-    with st.form(key="answer_form"):
-        st.write("정답을 선택하세요:")
-        
-        # 학생 답변 변수 초기화
-        student_answer = None
-        
+    # 폼 외부에 placeholder 생성
+    submit_placeholder = st.empty()
+    
+    # 학생 답변 변수 초기화
+    student_answer = None
+    
+    # 폼 키를 문제 ID로 만들어 문제마다 다른 폼을 사용
+    form_key = f"answer_form_{problem['문제ID']}"
+    
+    with st.form(key=form_key):
         if is_multiple_choice:
             # 객관식 문제: 보기를 라디오 버튼으로 표시
+            st.write("정답을 선택하세요:")
             options = []
             for i in range(1, 6):
                 option_key = f"보기{i}"
                 if option_key in problem and problem[option_key]:
                     options.append((option_key, problem[option_key]))
             
-            selected_option = st.radio(
-                label="",
-                options=options,
-                format_func=lambda x: f"{x[0]}: {x[1]}",
-                key=f"answer_radio_{problem['문제ID']}"
-            )
-            
-            # 학생이 선택한 답변 (보기1, 보기2 등)
-            student_answer = selected_option[0] if selected_option else None
+            if options:
+                selected_option = st.radio(
+                    label="",
+                    options=options,
+                    format_func=lambda x: f"{x[0]}: {x[1]}",
+                    key=f"radio_{problem['문제ID']}"
+                )
+                student_answer = selected_option[0]
+            else:
+                st.warning("이 문제에 보기가 없습니다.")
         else:
             # 단답형 문제: 텍스트 입력 필드 표시
-            student_answer = st.text_input(
+            st.write("답을 입력하세요:")
+            # 세션 상태를 사용하여 입력값 유지
+            answer_key = f"answer_text_{problem['문제ID']}"
+            text_input = st.text_input(
                 label="",
-                placeholder="답을 입력하세요",
-                key=f"answer_text_{problem['문제ID']}"
+                value=st.session_state.get(answer_key, ""),
+                placeholder="답을 입력하세요", 
+                key=answer_key
             )
+            student_answer = text_input.strip()
         
         # 제출 버튼
         submit_button = st.form_submit_button("정답 제출하기")
-        
-        if submit_button:
-            try:
-                if not student_answer:
-                    st.error("답을 입력하거나 선택해주세요.")
-                    return
-                
-                # GPT를 사용하여 채점 및 피드백 생성
-                score, feedback = generate_feedback(
-                    problem.get("문제내용", ""),
-                    student_answer,
-                    problem.get("정답", ""),
-                    problem.get("해설", "")
-                )
-                
-                # 세션 상태에 결과 저장
-                st.session_state.submitted = True
-                st.session_state.feedback = feedback
-                st.session_state.score = score
-                st.session_state.show_result = True
-                
-                # Google Sheets에 저장
-                save_student_answer(
-                    st.session_state.student_id,
-                    st.session_state.student_name,
-                    problem.get("문제ID", ""),
-                    student_answer,
-                    score,
-                    feedback
-                )
-                
-                st.rerun()
-            except Exception as e:
-                st.error("채점 중 오류가 발생했습니다.")
+    
+    # 폼 제출 후 처리 로직
+    if submit_button:
+        # 폼 placeholder에 진행 상태 표시
+        with submit_placeholder.container():
+            with st.spinner("채점 중..."):
+                try:
+                    if not student_answer:
+                        st.error("답을 입력하거나 선택해주세요.")
+                    else:
+                        # GPT를 사용하여 채점 및 피드백 생성
+                        score, feedback = generate_feedback(
+                            problem.get("문제내용", ""),
+                            student_answer,
+                            problem.get("정답", ""),
+                            problem.get("해설", "")
+                        )
+                        
+                        # 세션 상태에 결과 저장
+                        st.session_state.submitted = True
+                        st.session_state.feedback = feedback
+                        st.session_state.score = score
+                        st.session_state.show_result = True
+                        st.session_state.student_answer = student_answer
+                        
+                        # Google Sheets에 저장
+                        save_student_answer(
+                            st.session_state.student_id,
+                            st.session_state.student_name,
+                            problem.get("문제ID", ""),
+                            student_answer,
+                            score,
+                            feedback
+                        )
+                        
+                        st.rerun()
+                except Exception as e:
+                    st.error("채점 중 오류가 발생했습니다.")
 
 def result_page():
     """결과 페이지"""
     st.title("채점 결과")
     
     problem = st.session_state.current_problem
+    student_answer = st.session_state.get("student_answer", "")
     
     # 문제 정보 표시
     st.markdown(f"**과목**: {problem['과목']} | **학년**: {problem['학년']} | **유형**: {problem['문제유형']} | **난이도**: {problem['난이도']}")
@@ -222,19 +261,45 @@ def result_page():
     st.subheader("문제")
     st.markdown(problem.get("문제내용", "문제 내용을 불러올 수 없습니다."))
     
-    # 정답과 점수
+    # 문제 유형 확인 (객관식 또는 단답형)
+    is_multiple_choice = st.session_state.is_multiple_choice
+    
+    # 학생 답안과 정답 표시
     col1, col2 = st.columns(2)
+    
     with col1:
-        st.info(f"**정답**: {problem.get('정답', '')}")
+        if is_multiple_choice:
+            # 객관식 문제의 경우 보기 텍스트 찾기
+            answer_text = ""
+            correct_text = ""
+            
+            for i in range(1, 6):
+                option_key = f"보기{i}"
+                if option_key in problem and problem[option_key]:
+                    if option_key == student_answer:
+                        answer_text = problem[option_key]
+                    if option_key == problem.get("정답", ""):
+                        correct_text = problem[option_key]
+            
+            st.info(f"**제출 답안**: {student_answer} ({answer_text})")
+        else:
+            # 단답형 문제
+            st.info(f"**제출 답안**: {student_answer}")
     
     with col2:
-        score = st.session_state.score
-        if score is None:
-            st.error("**점수**: 채점 중 오류가 발생했습니다.")
-        elif score == 100:
-            st.success("**점수**: 100점")
+        if is_multiple_choice:
+            st.success(f"**정답**: {problem.get('정답', '')} ({correct_text})")
         else:
-            st.error(f"**점수**: {score}점")
+            st.success(f"**정답**: {problem.get('정답', '')}")
+    
+    # 점수 표시
+    score = st.session_state.score
+    if score is None:
+        st.error("**점수**: 채점 중 오류가 발생했습니다.")
+    elif score == 100:
+        st.success("**점수**: 100점")
+    else:
+        st.error(f"**점수**: {score}점")
     
     # 해설과 피드백
     st.subheader("문제 해설")
