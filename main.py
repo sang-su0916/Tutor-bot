@@ -12,6 +12,7 @@ if current_dir not in sys.path:
 try:
     from sheets_utils import connect_to_sheets, get_random_problem, save_student_answer
     from gpt_feedback import generate_feedback
+    import admin  # 관리자 모듈 추가
 except ImportError as e:
     st.error(f"모듈을 불러올 수 없습니다: {e}")
     
@@ -83,25 +84,127 @@ if check_reset_command() or "initialized" not in st.session_state:
     st.session_state.score = None
     st.session_state.show_result = False
     st.session_state.initialized = True
+    st.session_state.page = "intro"
 
-def login_page():
-    """학생 로그인 페이지"""
+def intro_page():
+    """시작 페이지"""
     st.title("GPT 학습 피드백 시스템")
     st.markdown("#### 우리 학원 전용 AI 튜터")
     
-    with st.form("login_form"):
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("👨‍🎓 학생 로그인", use_container_width=True):
+            st.session_state.page = "student_login"
+            st.rerun()
+    
+    with col2:
+        if st.button("👨‍🏫 교사 관리자", use_container_width=True):
+            st.session_state.page = "admin"
+            st.rerun()
+            
+    st.markdown("---")
+    st.markdown("##### 시스템 소개")
+    st.markdown("""
+    이 시스템은 학생들의 학습을 도와주는 AI 기반 피드백 시스템입니다.
+    - 학생들은 개인화된 문제를 풀고 즉각적인 피드백을 받을 수 있습니다.
+    - 교사들은 학생들의 진도와 성적을 관리할 수 있습니다.
+    """)
+
+def student_login_page():
+    """학생 로그인 페이지"""
+    st.title("학생 로그인")
+    
+    # 등록된 학생 목록 가져오기
+    try:
+        sheet = connect_to_sheets()
+        if sheet:
+            try:
+                worksheet = sheet.worksheet("students")
+                students = worksheet.get_all_records()
+                if students:
+                    # 학생 선택 옵션
+                    st.markdown("#### 등록된 학생 선택")
+                    
+                    # 학년별 필터링
+                    grade_filter = st.selectbox(
+                        "학년 선택", 
+                        options=["전체"] + admin.GRADE_OPTIONS
+                    )
+                    
+                    # 필터링된 학생 목록
+                    if grade_filter == "전체":
+                        filtered_students = students
+                    else:
+                        filtered_students = [s for s in students if s["학년"] == grade_filter]
+                    
+                    if filtered_students:
+                        student_options = [f"{s['이름']} ({s['학년']}, {s['실력등급']})" for s in filtered_students]
+                        selected_student = st.selectbox("학생 선택", options=student_options)
+                        
+                        if st.button("로그인", use_container_width=True):
+                            if selected_student:
+                                idx = student_options.index(selected_student)
+                                student_data = filtered_students[idx]
+                                
+                                # 학생 정보 설정
+                                st.session_state.student_id = student_data["학생ID"]
+                                st.session_state.student_name = student_data["이름"]
+                                st.session_state.student_grade = student_data["학년"]
+                                st.session_state.student_level = student_data["실력등급"]
+                                st.session_state.submitted = False
+                                st.session_state.show_result = False
+                                
+                                # 문제 관련 상태 초기화
+                                st.session_state.current_problem = None
+                                st.session_state.feedback = None
+                                st.session_state.score = None
+                                st.session_state.previous_problems = set()
+                                st.session_state.current_round = 1
+                                st.session_state.page = "problem"
+                                
+                                st.rerun()
+                    else:
+                        st.info("선택한 학년에 등록된 학생이 없습니다.")
+                else:
+                    st.warning("등록된 학생이 없습니다. 교사 관리자에게 문의하세요.")
+            except Exception as e:
+                st.error("학생 정보를 불러오는데 실패했습니다.")
+                st.markdown("### 직접 입력하기")
+                manual_login()
+        else:
+            st.error("데이터베이스 연결에 실패했습니다.")
+            st.markdown("### 직접 입력하기")
+            manual_login()
+    except Exception as e:
+        st.error("데이터베이스 연결에 실패했습니다.")
+        st.markdown("### 직접 입력하기")
+        manual_login()
+    
+    # 뒤로 가기 버튼
+    if st.button("← 뒤로 가기", key="back_btn"):
+        st.session_state.page = "intro"
+        st.rerun()
+
+def manual_login():
+    """직접 입력하여 로그인"""
+    with st.form("manual_login_form"):
         student_name = st.text_input("이름을 입력하세요")
+        
+        # 학년 선택
+        grade = st.selectbox("학년", options=admin.GRADE_OPTIONS)
+        
+        # 실력 등급 선택
+        level = st.selectbox("실력 등급", options=admin.LEVEL_OPTIONS)
+        
         submit_button = st.form_submit_button("로그인")
         
         if submit_button and student_name:
-            # 세션 상태 초기화
-            for key in list(st.session_state.keys()):
-                if key != "initialized":
-                    del st.session_state[key]
-                    
             # 학생 정보 설정
             st.session_state.student_id = str(uuid.uuid4())
             st.session_state.student_name = student_name
+            st.session_state.student_grade = grade
+            st.session_state.student_level = level
             st.session_state.submitted = False
             st.session_state.show_result = False
             
@@ -111,12 +214,14 @@ def login_page():
             st.session_state.score = None
             st.session_state.previous_problems = set()
             st.session_state.current_round = 1
+            st.session_state.page = "problem"
             
             st.rerun()
 
 def problem_page():
     """문제 페이지"""
     st.title(f"안녕하세요, {st.session_state.student_name}님!")
+    st.markdown(f"**학년**: {st.session_state.student_grade} | **실력등급**: {st.session_state.student_level}")
     
     # 처음 페이지가 로드될 때 또는 다음 문제 버튼을 눌렀을 때 문제를 가져옴
     if not st.session_state.current_problem or st.session_state.submitted:
@@ -267,6 +372,15 @@ def problem_page():
                     st.rerun()
                 except Exception as e:
                     st.error(f"채점 중 오류가 발생했습니다.")
+    
+    # 로그아웃 버튼
+    if st.button("로그아웃", key="logout_problem_btn"):
+        # 세션 상태 초기화
+        for key in list(st.session_state.keys()):
+            if key != "initialized" and key != "page":
+                del st.session_state[key]
+        st.session_state.page = "intro"
+        st.rerun()
 
 def result_page():
     """결과 페이지"""
@@ -372,11 +486,9 @@ def result_page():
         if st.button("로그아웃", key="logout_btn", use_container_width=True):
             # 세션 상태 초기화
             for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            # 초기 상태 설정
-            st.session_state.initialized = True
-            st.session_state.student_id = None
-            st.session_state.student_name = None
+                if key != "initialized" and key != "page":
+                    del st.session_state[key]
+            st.session_state.page = "intro"
             st.rerun()
 
 def main():
@@ -421,13 +533,20 @@ def main():
     """
     st.markdown(hide_streamlit_style, unsafe_allow_html=True)
     
-    # 로그인 상태에 따라 페이지 표시
-    if not st.session_state.student_id:
-        login_page()
-    elif st.session_state.show_result:
-        result_page()
+    # 현재 페이지에 따라 내용 표시
+    if st.session_state.page == "intro":
+        intro_page()
+    elif st.session_state.page == "admin":
+        admin.admin_main()
+    elif st.session_state.page == "student_login":
+        student_login_page()
+    elif st.session_state.page == "problem":
+        if st.session_state.show_result:
+            result_page()
+        else:
+            problem_page()
     else:
-        problem_page()
+        intro_page()
 
 if __name__ == "__main__":
     main() 
