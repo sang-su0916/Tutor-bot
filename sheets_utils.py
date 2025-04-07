@@ -56,8 +56,31 @@ def connect_to_sheets():
                     accessible_sheets = [sheet['name'] for sheet in spreadsheets]
                     st.info(f"접근 가능한 스프레드시트 목록: {accessible_sheets}")
                     
-                    # 스프레드시트 열기
-                    sheet = client.open_by_key(sheets_id)
+                    # 먼저 이름으로 시도
+                    try:
+                        sheet = client.open("Tutor-bot")
+                        st.success("이름으로 스프레드시트 접근 성공!")
+                    except gspread.exceptions.SpreadsheetNotFound:
+                        st.warning("이름으로 스프레드시트를 찾을 수 없어 ID로 시도합니다.")
+                        try:
+                            sheet = client.open_by_key(sheets_id)
+                            st.success("ID로 스프레드시트 접근 성공!")
+                        except gspread.exceptions.APIError as e:
+                            error_message = str(e)
+                            if "404" in error_message:
+                                st.error(f"스프레드시트를 찾을 수 없습니다. ID가 올바른지 확인해주세요: {sheets_id}")
+                                st.info("1. 스프레드시트 ID가 올바른지 확인")
+                                st.info("2. 서비스 계정에 스프레드시트가 공유되어 있는지 확인")
+                                return None
+                            elif "403" in error_message:
+                                st.error("권한이 없습니다. 다음 사항을 확인해주세요:")
+                                st.info("1. 스프레드시트가 서비스 계정과 공유되어 있는지 확인")
+                                st.info("2. Google Sheets API가 활성화되어 있는지 확인")
+                                st.info("3. Google Drive API가 활성화되어 있는지 확인")
+                                return None
+                            else:
+                                st.error(f"API 오류: {error_message}")
+                                return None
                     
                     # 워크시트 목록 확인
                     worksheet_list = sheet.worksheets()
@@ -84,21 +107,10 @@ def connect_to_sheets():
                     st.success("Google Sheets 연결 성공!")
                     return sheet
                     
-                except gspread.exceptions.APIError as e:
-                    error_message = str(e)
-                    if "404" in error_message:
-                        st.error(f"스프레드시트를 찾을 수 없습니다. ID가 올바른지 확인해주세요: {sheets_id}")
-                        st.info("1. 스프레드시트 ID가 올바른지 확인")
-                        st.info("2. 서비스 계정에 스프레드시트가 공유되어 있는지 확인")
-                    elif "403" in error_message:
-                        st.error("권한이 없습니다. 다음 사항을 확인해주세요:")
-                        st.info("1. 스프레드시트가 서비스 계정과 공유되어 있는지 확인")
-                        st.info("2. Google Sheets API가 활성화되어 있는지 확인")
-                        st.info("3. Google Drive API가 활성화되어 있는지 확인")
-                    else:
-                        st.error(f"API 오류: {error_message}")
+                except Exception as e:
+                    st.error(f"스프레드시트 접근 중 오류 발생: {str(e)}")
                     return None
-                    
+                
             except Exception as auth_error:
                 st.error(f"인증 처리 중 오류 발생: {str(auth_error)}")
                 return None
