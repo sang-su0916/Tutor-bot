@@ -28,18 +28,36 @@ def connect_to_sheets():
                         st.error(f"서비스 계정 설정에서 {field} 필드를 찾을 수 없습니다.")
                         return None
                 
-                scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+                # API 범위 확장
+                scope = [
+                    'https://spreadsheets.google.com/feeds',
+                    'https://www.googleapis.com/auth/spreadsheets',
+                    'https://www.googleapis.com/auth/drive',
+                    'https://www.googleapis.com/auth/drive.file'
+                ]
+                
                 try:
                     # 디버깅: 서비스 계정 정보 확인
                     st.info(f"스프레드시트 ID: {sheets_id}")
                     st.info(f"서비스 계정 이메일: {service_account_info.get('client_email', 'Not found')}")
                     
+                    # 인증 정보 생성
                     creds = ServiceAccountCredentials.from_json_keyfile_dict(service_account_info, scope)
                     client = gspread.authorize(creds)
                     
                     try:
-                        # 지정된 ID의 스프레드시트 열기 시도
-                        sheet = client.open_by_key(sheets_id)
+                        # 스프레드시트 존재 여부 확인
+                        try:
+                            sheet = client.open_by_key(sheets_id)
+                        except gspread.exceptions.APIError as e:
+                            if "404" in str(e):
+                                st.error(f"스프레드시트를 찾을 수 없습니다. ID를 확인해주세요: {sheets_id}")
+                            elif "403" in str(e):
+                                st.error("권한이 없습니다. 스프레드시트 공유 설정을 확인해주세요.")
+                            else:
+                                st.error(f"API 오류: {str(e)}")
+                            return None
+                        
                         # 연결 성공 시 워크시트 목록 확인
                         worksheet_list = sheet.worksheets()
                         st.success(f"연결된 워크시트: {[ws.title for ws in worksheet_list]}")
