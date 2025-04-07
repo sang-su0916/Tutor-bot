@@ -12,89 +12,95 @@ def connect_to_sheets():
     """
     try:
         # Streamlit secrets에서 인증 정보 가져오기
+        if "GSHEETS_ID" not in st.secrets:
+            st.error("GSHEETS_ID가 secrets에 설정되어 있지 않습니다.")
+            return None
+            
         sheets_id = st.secrets["GSHEETS_ID"]
+        st.info(f"스프레드시트 ID: {sheets_id}")
         
         # 서비스 계정 인증 (TOML 설정에서 가져오기)
         try:
             # Streamlit secrets의 gcp_service_account 설정을 사용
-            if "gcp_service_account" in st.secrets:
-                service_account_info = st.secrets["gcp_service_account"]
-                service_account_info = dict(service_account_info)
+            if "gcp_service_account" not in st.secrets:
+                st.error("gcp_service_account가 secrets에 설정되어 있지 않습니다.")
+                return None
                 
-                # API 범위 설정
-                scope = [
-                    'https://spreadsheets.google.com/feeds',
-                    'https://www.googleapis.com/auth/spreadsheets',
-                    'https://www.googleapis.com/auth/drive'
-                ]
+            service_account_info = st.secrets["gcp_service_account"]
+            service_account_info = dict(service_account_info)
+            
+            # 필수 필드 확인
+            required_fields = ["client_email", "private_key"]
+            for field in required_fields:
+                if field not in service_account_info:
+                    st.error(f"서비스 계정 설정에서 {field}가 누락되었습니다.")
+                    return None
+            
+            st.info(f"서비스 계정 이메일: {service_account_info['client_email']}")
+            
+            # API 범위 설정
+            scope = [
+                'https://spreadsheets.google.com/feeds',
+                'https://www.googleapis.com/auth/spreadsheets',
+                'https://www.googleapis.com/auth/drive'
+            ]
+            
+            try:
+                # 인증 및 클라이언트 생성
+                creds = ServiceAccountCredentials.from_json_keyfile_dict(service_account_info, scope)
+                client = gspread.authorize(creds)
                 
                 try:
-                    # 인증 및 클라이언트 생성
-                    creds = ServiceAccountCredentials.from_json_keyfile_dict(service_account_info, scope)
-                    client = gspread.authorize(creds)
+                    # 스프레드시트 열기 전에 접근 가능한 문서 목록 확인
+                    spreadsheets = client.list_spreadsheet_files()
+                    accessible_sheets = [sheet['name'] for sheet in spreadsheets]
+                    st.info(f"접근 가능한 스프레드시트 목록: {accessible_sheets}")
                     
-                    try:
-                        # 스프레드시트 열기
-                        sheet = client.open_by_key(sheets_id)
-                        
-                        # 필요한 워크시트 확인 및 초기화
-                        try:
-                            problems_ws = sheet.worksheet("problems")
-                        except gspread.exceptions.WorksheetNotFound:
-                            st.error("'problems' 워크시트를 찾을 수 없습니다.")
-                            return None
-                        
-                        try:
-                            answers_ws = sheet.worksheet("student_answers")
-                            # student_answers 워크시트 헤더 확인
-                            headers = answers_ws.row_values(1)
-                            expected_headers = [
-                                "학생ID",
-                                "이름",
-                                "문제ID",
-                                "제출답안",
-                                "점수",
-                                "피드백",
-                                "제출시간"
-                            ]
-                            
-                            # 헤더가 비어있거나 예상 헤더와 다른 경우에만 초기화
-                            if not headers:
-                                st.warning("student_answers 워크시트에 헤더가 없습니다. 헤더를 추가합니다.")
-                                answers_ws.append_row(expected_headers)
-                            
-                        except gspread.exceptions.WorksheetNotFound:
-                            # student_answers 워크시트 생성
-                            st.info("student_answers 워크시트를 생성합니다.")
-                            answers_ws = sheet.add_worksheet("student_answers", 1000, 7)
-                            answers_ws.append_row([
-                                "학생ID",
-                                "이름",
-                                "문제ID",
-                                "제출답안",
-                                "점수",
-                                "피드백",
-                                "제출시간"
-                            ])
-                        
-                        st.success("Google Sheets 연결 성공!")
-                        return sheet
-                        
-                    except gspread.exceptions.APIError as e:
-                        error_message = str(e)
-                        if "404" in error_message:
-                            st.error(f"스프레드시트를 찾을 수 없습니다. ID를 확인해주세요: {sheets_id}")
-                        elif "403" in error_message:
-                            st.error("권한이 없습니다. 스프레드시트 공유 설정을 확인해주세요.")
-                        else:
-                            st.error(f"API 오류: {error_message}")
+                    # 스프레드시트 열기
+                    sheet = client.open_by_key(sheets_id)
+                    
+                    # 워크시트 목록 확인
+                    worksheet_list = sheet.worksheets()
+                    worksheet_names = [ws.title for ws in worksheet_list]
+                    st.info(f"스프레드시트의 워크시트 목록: {worksheet_names}")
+                    
+                    if "problems" not in worksheet_names:
+                        st.error("'problems' 워크시트가 없습니다.")
                         return None
                         
-                except Exception as auth_error:
-                    st.error(f"인증 처리 중 오류 발생: {str(auth_error)}")
+                    if "student_answers" not in worksheet_names:
+                        st.info("'student_answers' 워크시트를 생성합니다.")
+                        answers_ws = sheet.add_worksheet("student_answers", 1000, 7)
+                        answers_ws.append_row([
+                            "학생ID",
+                            "이름",
+                            "문제ID",
+                            "제출답안",
+                            "점수",
+                            "피드백",
+                            "제출시간"
+                        ])
+                    
+                    st.success("Google Sheets 연결 성공!")
+                    return sheet
+                    
+                except gspread.exceptions.APIError as e:
+                    error_message = str(e)
+                    if "404" in error_message:
+                        st.error(f"스프레드시트를 찾을 수 없습니다. ID가 올바른지 확인해주세요: {sheets_id}")
+                        st.info("1. 스프레드시트 ID가 올바른지 확인")
+                        st.info("2. 서비스 계정에 스프레드시트가 공유되어 있는지 확인")
+                    elif "403" in error_message:
+                        st.error("권한이 없습니다. 다음 사항을 확인해주세요:")
+                        st.info("1. 스프레드시트가 서비스 계정과 공유되어 있는지 확인")
+                        st.info("2. Google Sheets API가 활성화되어 있는지 확인")
+                        st.info("3. Google Drive API가 활성화되어 있는지 확인")
+                    else:
+                        st.error(f"API 오류: {error_message}")
                     return None
-            else:
-                st.error("서비스 계정 설정을 찾을 수 없습니다.")
+                    
+            except Exception as auth_error:
+                st.error(f"인증 처리 중 오류 발생: {str(auth_error)}")
                 return None
                 
         except Exception as e:
