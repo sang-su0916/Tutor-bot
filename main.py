@@ -58,15 +58,19 @@ st.set_page_config(
 
 # URL 파라미터 확인 - 재시작 명령 처리
 def check_reset_command():
-    query_params = st.experimental_get_query_params()
-    if "reset" in query_params and query_params["reset"][0] == "true":
-        # 세션 상태 초기화
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        
-        # 쿼리 파라미터 제거
-        st.experimental_set_query_params()
-        return True
+    try:
+        query_params = st.query_params
+        if "reset" in query_params and query_params["reset"] == "true":
+            # 세션 상태 초기화
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            
+            # 쿼리 파라미터 제거
+            st.query_params.clear()
+            return True
+    except:
+        # 쿼리 파라미터 처리 중 오류 발생시 무시
+        pass
     return False
 
 # 세션 상태 초기화
@@ -141,53 +145,51 @@ def problem_page():
         if option_key in problem and problem[option_key]:
             options.append((option_key, problem[option_key]))
     
-    with st.form("answer_form"):
+    with st.form(key="answer_form"):
+        st.write("정답을 선택하세요:")
         # 보기를 라디오 버튼으로 표시
         selected_option = st.radio(
-            "정답을 선택하세요:",
+            label="",
             options=options,
             format_func=lambda x: f"{x[0]}: {x[1]}",
             key=f"answer_radio_{problem['문제ID']}"  # 문제별 고유 키 사용
         )
         
         # 제출 버튼
-        col1, col2, col3 = st.columns([1, 1, 1])
-        with col2:
-            submit_button = st.form_submit_button("정답 제출하기")
+        submit_button = st.form_submit_button("정답 제출하기")
         
         if submit_button:
-            with st.spinner("채점 중..."):
-                try:
-                    # 학생이 선택한 답변 (보기1, 보기2 등)
-                    student_answer = selected_option[0]
-                    
-                    # GPT를 사용하여 채점 및 피드백 생성
-                    score, feedback = generate_feedback(
-                        problem.get("문제내용", ""),
-                        student_answer,
-                        problem.get("정답", ""),
-                        problem.get("해설", "")
-                    )
-                    
-                    # 세션 상태에 결과 저장
-                    st.session_state.submitted = True
-                    st.session_state.feedback = feedback
-                    st.session_state.score = score
-                    st.session_state.show_result = True
-                    
-                    # Google Sheets에 저장
-                    save_student_answer(
-                        st.session_state.student_id,
-                        st.session_state.student_name,
-                        problem.get("문제ID", ""),
-                        student_answer,
-                        score,
-                        feedback
-                    )
-                    
-                    st.rerun()
-                except Exception as e:
-                    st.error("채점 중 오류가 발생했습니다.")
+            try:
+                # 학생이 선택한 답변 (보기1, 보기2 등)
+                student_answer = selected_option[0]
+                
+                # GPT를 사용하여 채점 및 피드백 생성
+                score, feedback = generate_feedback(
+                    problem.get("문제내용", ""),
+                    student_answer,
+                    problem.get("정답", ""),
+                    problem.get("해설", "")
+                )
+                
+                # 세션 상태에 결과 저장
+                st.session_state.submitted = True
+                st.session_state.feedback = feedback
+                st.session_state.score = score
+                st.session_state.show_result = True
+                
+                # Google Sheets에 저장
+                save_student_answer(
+                    st.session_state.student_id,
+                    st.session_state.student_name,
+                    problem.get("문제ID", ""),
+                    student_answer,
+                    score,
+                    feedback
+                )
+                
+                st.rerun()
+            except Exception as e:
+                st.error("채점 중 오류가 발생했습니다.")
 
 def result_page():
     """결과 페이지"""
@@ -231,23 +233,30 @@ def result_page():
     if "키워드" in problem and problem["키워드"]:
         st.markdown(f"**학습 키워드**: {problem['키워드']}")
     
-    # 버튼
-    col1, col2, col3 = st.columns([1, 1, 1])
+    # 버튼들
+    st.write("")  # 공백 추가
+    
+    col1, col2 = st.columns(2)
     with col1:
-        if st.button("다음 문제"):
+        if st.button("다음 문제", key="next_problem_btn", use_container_width=True):
+            # 다음 문제를 위한 상태 초기화
             st.session_state.current_problem = None
+            st.session_state.submitted = False
+            st.session_state.feedback = None
+            st.session_state.score = None
+            st.session_state.show_result = False
             st.rerun()
     
-    with col3:
-        show_logout()
-
-def show_logout():
-    """로그아웃 버튼"""
-    if st.button("로그아웃"):
-        # 세션 상태 초기화
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        st.rerun()
+    with col2:
+        if st.button("로그아웃", key="logout_btn", use_container_width=True):
+            # 세션 상태 초기화
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            # 초기 상태 설정
+            st.session_state.initialized = True
+            st.session_state.student_id = None
+            st.session_state.student_name = None
+            st.rerun()
 
 def main():
     """메인 함수"""
@@ -277,6 +286,11 @@ def main():
             div[data-testid="stNotificationContainer"] {display: none !important;}
             div[data-testid="stAppViewBlockContainer"] > section[data-testid="stCaptionContainer"] {display: none !important;}
             iframe[name="stNotificationFrame"] {display: none !important;}
+            div[data-testid="stForm"] {border: none !important; padding: 0 !important;}
+            div.stRadio > div {flex-direction: column !important;}
+            div.stRadio label {padding: 10px !important; border: 1px solid #f0f0f0 !important; border-radius: 5px !important; margin: 5px 0 !important;}
+            div.stRadio label:hover {background-color: #f8f8f8 !important;}
+            button[kind="primaryFormSubmit"] {width: 100% !important;}
         </style>
     """
     st.markdown(hide_streamlit_style, unsafe_allow_html=True)
