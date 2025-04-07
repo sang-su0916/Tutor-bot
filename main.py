@@ -903,6 +903,200 @@ def exam_score_page():
         st.session_state.page = "student_dashboard"
         st.rerun()
 
+def problem_page():
+    """개별 문제 풀이 페이지"""
+    if not hasattr(st.session_state, 'student_id') or st.session_state.student_id is None:
+        st.error("로그인 정보가 없습니다.")
+        if st.button("로그인 페이지로 돌아가기"):
+            st.session_state.page = "intro"
+            st.rerun()
+        return
+    
+    # 문제 로드 (현재 문제가 없는 경우)
+    if 'current_problem' not in st.session_state or st.session_state.current_problem is None:
+        try:
+            # 이전에 풀었던 문제 ID 기록
+            previous_problems = st.session_state.get('previous_problems', set())
+            
+            # 학생 맞춤형 문제 추천
+            sheet = connect_to_sheets()
+            if sheet:
+                try:
+                    worksheet = sheet.worksheet("problems")
+                    all_problems = worksheet.get_all_records()
+                    if all_problems:
+                        # 학생 수준에 맞는 문제 필터링
+                        student_grade = st.session_state.student_grade
+                        available_problems = [p for p in all_problems if p["학년"] == student_grade]
+                        
+                        if available_problems:
+                            # 이전에 안 풀었던 문제 중에서 추천
+                            available_problems = [p for p in available_problems if p["문제ID"] not in previous_problems]
+                            
+                            if not available_problems:
+                                # 모든 문제를 다 풀었다면 다시 처음부터
+                                available_problems = [p for p in all_problems if p["학년"] == student_grade]
+                                previous_problems.clear()
+                            
+                            # 학생 취약점을 고려한 문제 추천
+                            problem = get_problem_for_student(
+                                st.session_state.student_id,
+                                available_problems
+                            )
+                            
+                            if problem:
+                                st.session_state.current_problem = problem
+                                st.session_state.previous_problems.add(problem["문제ID"])
+                except Exception as e:
+                    st.error(f"문제 추천 중 오류 발생: {str(e)}")
+                    # 오류 발생 시 랜덤 문제 선택
+                    problem = get_random_problem()
+                    st.session_state.current_problem = problem
+        except Exception as e:
+            st.error(f"문제 로드 중 오류 발생: {str(e)}")
+            # 오류 발생 시 랜덤 문제 선택
+            problem = get_random_problem()
+            st.session_state.current_problem = problem
+    
+    # 문제가 성공적으로 로드되었는지 확인
+    if 'current_problem' not in st.session_state or st.session_state.current_problem is None:
+        st.error("문제를 불러오는데 실패했습니다.")
+        if st.button("대시보드로 돌아가기", key="error_to_dashboard"):
+            st.session_state.page = "student_dashboard"
+            st.rerun()
+        return
+    
+    problem = st.session_state.current_problem
+    
+    # 문제 표시
+    st.title("문제 풀기")
+    
+    # 진행 상황 표시
+    col1, col2 = st.columns(2)
+    with col1:
+        if 'problem_count' in st.session_state and 'max_problems' in st.session_state:
+            st.info(f"문제 {st.session_state.problem_count}/{st.session_state.max_problems}")
+    
+    with col2:
+        # 남은 시간 표시 (있는 경우)
+        if 'start_time' in st.session_state and 'time_limit' in st.session_state:
+            elapsed_time = time.time() - st.session_state.start_time
+            remaining_time = max(0, st.session_state.time_limit - elapsed_time)
+            
+            # 시간 표시
+            mins, secs = divmod(int(remaining_time), 60)
+            time_str = f"{mins:02d}:{secs:02d}"
+            st.info(f"남은 시간: {time_str}")
+            
+            # 시간 제한 확인
+            if remaining_time <= 0:
+                st.warning("시간이 초과되었습니다. 결과 페이지로 이동합니다.")
+                st.session_state.page = "exam_result"
+                st.rerun()
+    
+    # 문제 정보 표시
+    subject = problem.get("과목", "")
+    grade = problem.get("학년", "")
+    difficulty = problem.get("난이도", "")
+    
+    st.markdown(f"**과목**: {subject} | **학년**: {grade} | **난이도**: {difficulty}")
+    
+    # 문제 내용
+    st.subheader(problem.get("문제내용", "문제 내용을 불러올 수 없습니다."))
+    
+    # 보기가 있는지 확인
+    has_options = False
+    options = []
+    
+    for i in range(1, 6):
+        option_key = f"보기{i}"
+        if option_key in problem and problem[option_key]:
+            has_options = True
+            options.append((option_key, problem[option_key]))
+    
+    # 객관식 또는 주관식 문제 처리
+    with st.form(key='problem_form'):
+        if has_options:
+            # 객관식 문제
+            st.session_state.is_multiple_choice = True
+            selected_option = st.radio(
+                "정답을 선택하세요:",
+                options=options,
+                format_func=lambda x: f"{x[0]}: {x[1]}"
+            )
+            student_answer = selected_option[0] if selected_option else None
+        else:
+            # 주관식 문제
+            st.session_state.is_multiple_choice = False
+            student_answer = st.text_input("답을 입력하세요:")
+        
+        submit_button = st.form_submit_button("제출")
+    
+    # 제출 처리
+    if submit_button and student_answer:
+        st.session_state.student_answer = student_answer
+        st.session_state.submitted = True
+        
+        # 정답 확인
+        correct_answer = problem.get("정답", "")
+        
+        # 정답 처리
+        if st.session_state.is_multiple_choice:
+            # 객관식 문제는 정확히 일치해야 함
+            is_correct = (student_answer == correct_answer)
+        else:
+            # 주관식 문제는 대소문자 무시, 공백 제거 후 비교
+            normalized_student = student_answer.lower().strip()
+            normalized_correct = correct_answer.lower().strip()
+            is_correct = (normalized_student == normalized_correct)
+        
+        # 점수 계산
+        score = 100 if is_correct else 0
+        
+        # GPT 피드백 생성
+        try:
+            feedback_score, feedback_text = generate_feedback(
+                problem.get("문제내용", ""),
+                student_answer,
+                correct_answer,
+                problem.get("해설", "")
+            )
+            
+            # 피드백 저장
+            st.session_state.feedback = feedback_text
+            st.session_state.score = score
+            
+            # 학생 답안 저장
+            save_student_answer(
+                st.session_state.student_id,
+                st.session_state.student_name,
+                problem["문제ID"],
+                student_answer,
+                score,
+                feedback_text
+            )
+            
+            # 학생 키워드 취약점 업데이트
+            keywords = problem.get("키워드", "")
+            update_problem_stats(
+                st.session_state.student_id,
+                problem["문제ID"],
+                keywords,
+                is_correct
+            )
+            
+            # 결과 페이지로 이동
+            st.session_state.show_result = True
+            st.session_state.page = "result"
+            st.rerun()
+        except Exception as e:
+            st.error(f"피드백 생성 중 오류가 발생했습니다: {str(e)}")
+    
+    # 대시보드로 돌아가기 버튼
+    if st.button("← 대시보드", key="back_btn"):
+        st.session_state.page = "student_dashboard"
+        st.rerun()
+
 def main():
     """메인 함수"""
     # CSS 스타일
