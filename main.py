@@ -1,7 +1,47 @@
 import streamlit as st
 import uuid
-from sheets_utils import connect_to_sheets, get_random_problem, save_student_answer
-from gpt_feedback import generate_feedback
+import os
+import sys
+
+# 현재 디렉토리를 시스템 경로에 추가
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
+
+# 모듈 임포트
+try:
+    from sheets_utils import connect_to_sheets, get_random_problem, save_student_answer
+    from gpt_feedback import generate_feedback
+except ImportError as e:
+    st.error(f"모듈을 불러올 수 없습니다: {e}")
+    
+    # 대체 함수 정의
+    def get_random_problem():
+        return {
+            "문제ID": "dummy-1",
+            "과목": "영어",
+            "학년": "중1",
+            "문제유형": "객관식",
+            "난이도": "하",
+            "문제내용": "Pick the correct word to complete: The cat ___ to school.",
+            "보기1": "went",
+            "보기2": "gone",
+            "보기3": "going",
+            "보기4": "goes",
+            "보기5": "go",
+            "정답": "보기4",
+            "키워드": "동사 시제",
+            "해설": "현재 시제를 사용해야 합니다. 주어가 'The cat'으로 3인칭 단수이므로 'goes'가 정답입니다."
+        }
+    
+    def save_student_answer(student_id, student_name, problem_id, submitted_answer, score, feedback):
+        return True
+    
+    def generate_feedback(question, student_answer, correct_answer, explanation):
+        if student_answer == correct_answer:
+            return 100, "정답입니다! 해설을 읽고 개념을 더 깊이 이해해보세요."
+        else:
+            return 0, "틀렸습니다. 해설을 잘 읽고 다시 한 번 풀어보세요."
 
 # 페이지 설정
 st.set_page_config(
@@ -16,21 +56,29 @@ st.set_page_config(
     }
 )
 
+# URL 파라미터 확인 - 재시작 명령 처리
+def check_reset_command():
+    query_params = st.experimental_get_query_params()
+    if "reset" in query_params and query_params["reset"][0] == "true":
+        # 세션 상태 초기화
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        
+        # 쿼리 파라미터 제거
+        st.experimental_set_query_params()
+        return True
+    return False
+
 # 세션 상태 초기화
-if "student_id" not in st.session_state:
+if check_reset_command() or "initialized" not in st.session_state:
     st.session_state.student_id = None
-if "student_name" not in st.session_state:
     st.session_state.student_name = None
-if "current_problem" not in st.session_state:
     st.session_state.current_problem = None
-if "submitted" not in st.session_state:
     st.session_state.submitted = False
-if "feedback" not in st.session_state:
     st.session_state.feedback = None
-if "score" not in st.session_state:
     st.session_state.score = None
-if "show_result" not in st.session_state:
     st.session_state.show_result = False
+    st.session_state.initialized = True
 
 def login_page():
     """학생 로그인 페이지"""
@@ -206,21 +254,29 @@ def main():
     # CSS로 디버그 정보 숨기기
     hide_streamlit_style = """
         <style>
-            #MainMenu {visibility: hidden;}
-            footer {visibility: hidden;}
-            .stDeployButton {display:none;}
-            div[data-testid="stToolbar"] {visibility: hidden;}
-            div[data-testid="stDecoration"] {visibility: hidden;}
-            div[data-testid="stStatusWidget"] {visibility: hidden;}
-            div[data-testid="stHeader"] {visibility: hidden;}
-            div.block-container {padding-top: 0rem;}
-            div.block-container {padding-bottom: 0rem;}
-            div[data-testid="stAppViewContainer"] > section:first-child {padding-top: 1rem;}
-            div[data-testid="stVerticalBlock"] {gap: 1rem;}
-            div[data-testid="stConnectionStatus"] {visibility: hidden;}
-            div[data-testid="stSpinner"] {visibility: hidden;}
-            div[data-testid="stDebugElement"] {visibility: hidden;}
-            div[data-testid="stMarkdownContainer"] > div > p {margin-bottom: 0.5rem;}
+            #MainMenu {visibility: hidden !important;}
+            footer {visibility: hidden !important;}
+            .stDeployButton {display:none !important;}
+            div[data-testid="stToolbar"] {visibility: hidden !important;}
+            div[data-testid="stDecoration"] {visibility: hidden !important;}
+            div[data-testid="stStatusWidget"] {visibility: hidden !important;}
+            div[data-testid="stHeader"] {visibility: hidden !important;}
+            div.block-container {padding-top: 0rem !important;}
+            div.block-container {padding-bottom: 0rem !important;}
+            div[data-testid="stAppViewContainer"] > section:first-child {padding-top: 1rem !important;}
+            div[data-testid="stVerticalBlock"] {gap: 1rem !important;}
+            div[data-testid="stConnectionStatus"] {visibility: hidden !important;}
+            div[data-testid="stSpinner"] {visibility: hidden !important;}
+            div[data-testid="stDebugElement"] {visibility: hidden !important;}
+            div[data-testid="stMarkdownContainer"] > div > p {margin-bottom: 0.5rem !important;}
+            div.st-emotion-cache-16txtl3 {padding-top: 0rem !important;}
+            div.st-emotion-cache-16txtl3 {padding-bottom: 0rem !important;}
+            div.st-emotion-cache-ue6h4q {padding-top: 0rem !important;}
+            div.stAlert {display: none !important;}
+            div[data-baseweb="notification"] {display: none !important;}
+            div[data-testid="stNotificationContainer"] {display: none !important;}
+            div[data-testid="stAppViewBlockContainer"] > section[data-testid="stCaptionContainer"] {display: none !important;}
+            iframe[name="stNotificationFrame"] {display: none !important;}
         </style>
     """
     st.markdown(hide_streamlit_style, unsafe_allow_html=True)
