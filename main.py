@@ -108,6 +108,28 @@ def intro_page():
     st.title("GPT 학습 피드백 시스템")
     st.markdown("#### 우리 학원 전용 AI 튜터")
     
+    # API 연결 상태 확인 (옵션)
+    with st.expander("API 연결 상태"):
+        api_status = check_api_connections()
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if api_status["google_sheets"]:
+                st.success("Google Sheets: 연결됨 ✅")
+            else:
+                st.error("Google Sheets: 연결 안됨 ❌")
+        
+        with col2:
+            if api_status["openai"]:
+                st.success("OpenAI API: 연결됨 ✅")
+            else:
+                st.error("OpenAI API: 연결 안됨 ❌")
+        
+        if api_status["error_messages"]:
+            st.markdown("#### 오류 메시지")
+            for msg in api_status["error_messages"]:
+                st.warning(msg)
+    
     col1, col2 = st.columns(2)
     
     with col1:
@@ -301,9 +323,7 @@ def load_exam_problems():
                             if not available_problems_all:
                                 # 기본 더미 문제 생성
                                 for i in range(20):
-                                    dummy_problem = get_random_problem()
-                                    # ID 생성 - 중복 방지를 위해 타임스탬프 추가
-                                    dummy_problem["문제ID"] = f"dummy-{uuid.uuid4()}"
+                                    dummy_problem = create_unique_dummy_problem(i)
                                     # 학년 수정 - 학생 학년에 맞추기
                                     dummy_problem["학년"] = student_grade
                                     st.session_state.exam_problems.append(dummy_problem)
@@ -362,37 +382,9 @@ def load_exam_problems():
         
         # 문제가 부족하면 더미 문제로 채우기
         while len(st.session_state.exam_problems) < 20:
-            dummy_problem = {
-                "문제ID": f"dummy-{uuid.uuid4()}",
-                "과목": "영어",
-                "학년": st.session_state.get("student_grade", "중학교 1학년"),
-                "문제유형": "객관식",
-                "난이도": "중",
-                "문제내용": f"Choose the correct verb form to complete the sentence: The students ___ their homework.",
-                "보기1": "do",
-                "보기2": "does",
-                "보기3": "doing",
-                "보기4": "done",
-                "보기5": "did",
-                "정답": "보기1",
-                "키워드": "동사 활용",
-                "해설": "주어가 복수 명사(students)이므로 현재 시제의 'do'가 정답입니다."
-            }
-            
-            # 더미 문제 내용 변형 (중복 방지)
-            import random
-            
-            # 주어/문장 패턴 다양화
-            subjects = ["The students", "They", "The teachers", "We", "The children", "My friends"]
-            verbs = ["write", "read", "finish", "complete", "submit", "prepare", "study for"]
-            objects = ["homework", "assignments", "tests", "exams", "projects", "essays", "presentations"]
-            
-            # 랜덤 문장 생성
-            subject = random.choice(subjects)
-            verb = random.choice(verbs)
-            obj = random.choice(objects)
-            
-            dummy_problem["문제내용"] = f"Choose the correct verb form to complete the sentence: {subject} ___ {obj} every day."
+            # 현재 인덱스 기준 고유 더미 문제 생성
+            dummy_idx = len(st.session_state.exam_problems)
+            dummy_problem = create_unique_dummy_problem(dummy_idx)
             
             # 학년 수정 - 학생 학년에 맞추기
             if hasattr(st.session_state, 'student_grade'):
@@ -402,6 +394,125 @@ def load_exam_problems():
     
     # 항상 최대 20개만 반환 (혹시 20개 이상인 경우)
     return st.session_state.exam_problems[:20]
+
+# 문제 번호에 따라 다른 더미 문제를 생성하는 헬퍼 함수
+def create_unique_dummy_problem(index):
+    """문제 번호에 따라 고유한 더미 문제를 생성합니다"""
+    import random
+    
+    # 문제 유형 목록
+    question_templates = [
+        "Choose the correct verb form to complete the sentence: {subject} ___ {object} {time_expression}.",
+        "Select the appropriate word to fill in the blank: {subject} ___ {object}.",
+        "Pick the correct word to complete: {subject} ___ {prepositional_phrase}.",
+        "Find the grammatically correct option: {subject} ___ {verb_phrase}.",
+        "Which is the correct form? {subject} ___ {object}."
+    ]
+    
+    # 주어/문장 패턴 다양화
+    subjects = [
+        "The students", "They", "The teachers", "We", "The children", 
+        "My friends", "The man", "The woman", "The cat", "The dog",
+        "The boy", "The girl", "The people", "Everyone", "Somebody"
+    ]
+    
+    verbs = [
+        "do", "write", "read", "finish", "complete", 
+        "submit", "prepare", "study for", "see", "hear"
+    ]
+    
+    objects = [
+        "homework", "assignments", "tests", "exams", "projects", 
+        "essays", "presentations", "books", "lessons", "classes"
+    ]
+    
+    time_expressions = [
+        "every day", "last week", "tomorrow", "right now", "next month",
+        "yesterday", "currently", "regularly", "on weekends", "during summer"
+    ]
+    
+    prepositions = [
+        "to school", "at home", "in the classroom", "with friends", "by bus",
+        "around the park", "through the forest", "under the bridge", "near the lake", "behind the building"
+    ]
+    
+    # 고유한 문제 생성을 위한 시드 설정
+    # 같은 인덱스에 항상 같은 랜덤값이 나오도록 설정
+    random.seed(index)
+    
+    # 선택된 템플릿
+    template_idx = index % len(question_templates)
+    template = question_templates[template_idx]
+    
+    # 문장 요소 선택
+    subject = subjects[index % len(subjects)]
+    verb = verbs[index % len(verbs)]
+    obj = objects[(index * 3) % len(objects)]
+    time_expr = time_expressions[(index * 7) % len(time_expressions)]
+    prep_phrase = prepositions[(index * 5) % len(prepositions)]
+    
+    # 문제 내용 생성
+    question_content = template.format(
+        subject=subject,
+        object=obj,
+        time_expression=time_expr,
+        prepositional_phrase=prep_phrase,
+        verb_phrase=f"{verb} {obj}"
+    )
+    
+    # 객관식 보기 생성 (주관식/객관식 번갈아가며)
+    is_objective = (index % 2 == 0)
+    
+    if is_objective:
+        # 객관식 문제 생성 - 고유한 보기 생성
+        options = ["goes", "go", "going", "gone", "went"]
+        answer_idx = index % 5  # 정답 인덱스 (0부터 4까지 반복)
+        
+        # 인덱스를 기반으로 보기 순서 섞기
+        shuffled_options = options.copy()
+        random.shuffle(shuffled_options)
+        
+        # 문제에서 사용할 정답 결정
+        correct_option = f"보기{answer_idx + 1}"
+        
+        # 문제 객체 생성
+        dummy_problem = {
+            "문제ID": f"dummy-{index}-{uuid.uuid4()}",
+            "과목": "영어",
+            "학년": "중학교 1학년",
+            "문제유형": "객관식",
+            "난이도": ["하", "중", "상"][index % 3],
+            "문제내용": question_content,
+            "보기1": shuffled_options[0],
+            "보기2": shuffled_options[1],
+            "보기3": shuffled_options[2],
+            "보기4": shuffled_options[3],
+            "보기5": shuffled_options[4],
+            "정답": correct_option,
+            "키워드": ["동사 활용", "시제", "문법", "어휘", "구문"][index % 5],
+            "해설": f"문제의 주어가 '{subject}'이므로 적절한 동사 형태는 '{shuffled_options[answer_idx]}'입니다."
+        }
+    else:
+        # 주관식 문제 생성
+        answers = ["goes", "go", "going", "gone", "went"]
+        answer = answers[index % 5]
+        
+        dummy_problem = {
+            "문제ID": f"dummy-{index}-{uuid.uuid4()}",
+            "과목": "영어",
+            "학년": "중학교 1학년",
+            "문제유형": "주관식",
+            "난이도": ["하", "중", "상"][index % 3],
+            "문제내용": question_content,
+            "정답": answer,
+            "키워드": ["동사 활용", "시제", "문법", "어휘", "구문"][index % 5],
+            "해설": f"문제의 주어가 '{subject}'이므로 적절한 동사 형태는 '{answer}'입니다."
+        }
+    
+    # 시드 초기화 (다른 코드에 영향을 주지 않도록)
+    random.seed()
+    
+    return dummy_problem
 
 def exam_page():
     """시험 페이지 - 20문제를 한 페이지에 모두 표시"""
@@ -865,11 +976,51 @@ def exam_score_page():
     # 결과 요약
     st.markdown(f"### 정답률: {results['correct_count']}/{results['total_problems']} 문제")
     
+    # 피드백 데이터 생성
+    if 'feedback_data' not in st.session_state:
+        with st.spinner("문제 해설 및 피드백 생성 중..."):
+            feedback_data = {}
+            
+            for problem_id, result in results['details'].items():
+                problem_data = st.session_state.student_answers.get(problem_id, {})
+                if not problem_data:
+                    continue
+                
+                # 기본 피드백 정보 구성
+                feedback = {
+                    "학생답안": result['student_answer'],
+                    "정답": result['correct_answer'],
+                    "해설": problem_data.get('해설', ""),
+                    "첨삭": ""
+                }
+                
+                # GPT 첨삭 생성 시도 (옵션)
+                try:
+                    if "OPENAI_API_KEY" in st.secrets:
+                        score, feedback_text = generate_feedback(
+                            problem_data.get('문제', ''),
+                            result['student_answer'],
+                            result['correct_answer'],
+                            problem_data.get('해설', '')
+                        )
+                        feedback["첨삭"] = feedback_text
+                except:
+                    # GPT 피드백 생성 실패 시 기본 피드백 사용
+                    if result['is_correct']:
+                        feedback["첨삭"] = "정답입니다! 해설을 통해 개념을 확실히 이해해 보세요."
+                    else:
+                        feedback["첨삭"] = "오답입니다. 해설을 잘 읽고 왜 틀렸는지 파악해 보세요."
+                
+                feedback_data[problem_id] = feedback
+            
+            st.session_state.feedback_data = feedback_data
+    
     # 각 문제별 결과
     st.subheader("상세 결과")
     
     for idx, (problem_id, result) in enumerate(results['details'].items(), 1):
         problem_data = st.session_state.student_answers.get(problem_id, {})
+        feedback_data = st.session_state.feedback_data.get(problem_id, {})
         
         if result['is_correct']:
             icon = "✅"
@@ -892,6 +1043,15 @@ def exam_score_page():
             with col2:
                 st.markdown("#### 정답")
                 st.markdown(f"**{result['correct_answer']}**")
+            
+            # 해설 및 피드백 표시
+            st.markdown("#### 해설")
+            st.markdown(feedback_data.get('해설', ''))
+            
+            if feedback_data.get('첨삭'):
+                st.markdown("#### 첨삭 피드백")
+                with st.container(border=True):
+                    st.markdown(feedback_data.get('첨삭', ''))
     
     # 성적 분석 버튼
     if st.button("나의 성적 분석 보기", use_container_width=True):
@@ -902,6 +1062,57 @@ def exam_score_page():
     if st.button("대시보드로 돌아가기", use_container_width=True):
         st.session_state.page = "student_dashboard"
         st.rerun()
+
+def check_api_connections():
+    """Google Sheets와 OpenAI API 연결 상태를 확인합니다."""
+    connections = {
+        "google_sheets": False,
+        "openai": False,
+        "error_messages": []
+    }
+    
+    # Google Sheets 연결 확인
+    try:
+        sheet = connect_to_sheets()
+        if sheet:
+            try:
+                # 실제로 데이터 읽기 시도
+                worksheet = sheet.worksheet("problems")
+                records = worksheet.get_all_records(limit=1)  # 첫 번째 행만 읽기
+                connections["google_sheets"] = True
+            except Exception as e:
+                connections["error_messages"].append(f"Google Sheets 접근 오류: {str(e)}")
+        else:
+            connections["error_messages"].append("Google Sheets 연결에 실패했습니다.")
+    except Exception as e:
+        connections["error_messages"].append(f"Google Sheets 연결 오류: {str(e)}")
+    
+    # OpenAI API 연결 확인
+    try:
+        if "OPENAI_API_KEY" in st.secrets:
+            import openai
+            openai.api_key = st.secrets["OPENAI_API_KEY"]
+            
+            try:
+                # 간단한 API 호출로 연결 테스트
+                response = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant."},
+                        {"role": "user", "content": "Hello!"}
+                    ],
+                    max_tokens=5
+                )
+                if response:
+                    connections["openai"] = True
+            except Exception as e:
+                connections["error_messages"].append(f"OpenAI API 오류: {str(e)}")
+        else:
+            connections["error_messages"].append("OpenAI API 키가 설정되지 않았습니다.")
+    except Exception as e:
+        connections["error_messages"].append(f"OpenAI API 연결 오류: {str(e)}")
+    
+    return connections
 
 def problem_page():
     """개별 문제 풀이 페이지"""
