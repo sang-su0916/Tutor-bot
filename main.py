@@ -88,13 +88,19 @@ def check_reset_command():
 if check_reset_command() or "initialized" not in st.session_state:
     st.session_state.student_id = None
     st.session_state.student_name = None
+    st.session_state.student_grade = None
+    st.session_state.student_level = None
     st.session_state.current_problem = None
     st.session_state.submitted = False
     st.session_state.feedback = None
     st.session_state.score = None
     st.session_state.show_result = False
+    st.session_state.is_multiple_choice = False
+    st.session_state.previous_problems = set()
+    st.session_state.current_round = 1
     st.session_state.initialized = True
     st.session_state.page = "intro"
+    st.session_state.student_answer = None
 
 def intro_page():
     """시작 페이지"""
@@ -231,8 +237,15 @@ def manual_login():
 
 def student_dashboard():
     """학생 대시보드 페이지"""
-    st.title(f"환영합니다, {st.session_state.student_name}님!")
-    st.markdown(f"**학년**: {st.session_state.student_grade} | **실력등급**: {st.session_state.student_level}")
+    if not hasattr(st.session_state, 'student_id') or st.session_state.student_id is None:
+        st.error("로그인 정보가 없습니다.")
+        if st.button("로그인 페이지로 돌아가기"):
+            st.session_state.page = "intro"
+            st.rerun()
+        return
+        
+    st.title(f"환영합니다, {st.session_state.get('student_name', '학생')}님!")
+    st.markdown(f"**학년**: {st.session_state.get('student_grade', 'N/A')} | **실력등급**: {st.session_state.get('student_level', 'N/A')}")
     
     # 두 개의 메인 옵션 제공
     col1, col2 = st.columns(2)
@@ -258,8 +271,15 @@ def student_dashboard():
 
 def problem_page():
     """문제 페이지"""
+    if not hasattr(st.session_state, 'student_id') or st.session_state.student_id is None:
+        st.error("로그인 정보가 없습니다.")
+        if st.button("로그인 페이지로 돌아가기"):
+            st.session_state.page = "intro"
+            st.rerun()
+        return
+    
     st.title(f"문제 풀기")
-    st.markdown(f"**학생**: {st.session_state.student_name} | **학년**: {st.session_state.student_grade} | **실력등급**: {st.session_state.student_level}")
+    st.markdown(f"**학생**: {st.session_state.get('student_name', '학생')} | **학년**: {st.session_state.get('student_grade', 'N/A')} | **실력등급**: {st.session_state.get('student_level', 'N/A')}")
     
     # 두 개의 버튼 추가 - 대시보드로 돌아가기와 로그아웃
     col1, col2 = st.columns([1, 3])
@@ -269,7 +289,7 @@ def problem_page():
             st.rerun()
     
     # 처음 페이지가 로드될 때 또는 다음 문제 버튼을 눌렀을 때 문제를 가져옴
-    if not st.session_state.current_problem or st.session_state.submitted:
+    if not hasattr(st.session_state, 'current_problem') or st.session_state.current_problem is None or st.session_state.submitted:
         with st.spinner("문제를 불러오는 중..."):
             try:
                 # 이전 문제 정보 저장
@@ -426,10 +446,24 @@ def problem_page():
                     )
                     
                     # 세션 상태에 결과 저장
+                    if "submitted" not in st.session_state:
+                        st.session_state.submitted = False
                     st.session_state.submitted = True
+                    
+                    if "feedback" not in st.session_state:
+                        st.session_state.feedback = None
                     st.session_state.feedback = feedback
+                    
+                    if "score" not in st.session_state:
+                        st.session_state.score = None
                     st.session_state.score = score
+                    
+                    if "show_result" not in st.session_state:
+                        st.session_state.show_result = False
                     st.session_state.show_result = True
+                    
+                    if "student_answer" not in st.session_state:
+                        st.session_state.student_answer = None
                     st.session_state.student_answer = student_answer
                     
                     # Google Sheets에 저장
@@ -457,21 +491,36 @@ def problem_page():
 
 def my_performance_page():
     """학생 성적 분석 페이지"""
-    if st.button("← 대시보드", key="back_to_dashboard_from_performance"):
-        st.session_state.page = "student_dashboard"
-        st.rerun()
-    
+    if not hasattr(st.session_state, 'student_id') or st.session_state.student_id is None:
+        st.error("로그인 정보가 없습니다.")
+        if st.button("로그인 페이지로 돌아가기"):
+            st.session_state.page = "intro"
+            st.rerun()
+        return
+        
     # 학생 성적 대시보드 표시
     show_student_performance_dashboard(
         st.session_state.student_id,
-        st.session_state.student_name,
-        st.session_state.student_grade,
-        st.session_state.student_level
+        st.session_state.get("student_name", "학생"),
+        st.session_state.get("student_grade", ""),
+        st.session_state.get("student_level", "")
     )
+    
+    # 대시보드로 돌아가기 버튼
+    if st.button("← 대시보드로 돌아가기"):
+        st.session_state.page = "student_dashboard"
+        st.rerun()
 
 def result_page():
     """결과 페이지"""
     st.title("채점 결과")
+    
+    if not hasattr(st.session_state, 'current_problem') or st.session_state.current_problem is None:
+        st.error("문제 정보를 찾을 수 없습니다.")
+        if st.button("대시보드로 돌아가기"):
+            st.session_state.page = "student_dashboard"
+            st.rerun()
+        return
     
     problem = st.session_state.current_problem
     student_answer = st.session_state.get("student_answer", "")
@@ -484,10 +533,10 @@ def result_page():
     st.markdown(problem.get("문제내용", "문제 내용을 불러올 수 없습니다."))
     
     # 문제 유형 확인 (객관식 또는 단답형)
-    is_multiple_choice = st.session_state.is_multiple_choice
+    is_multiple_choice = st.session_state.get("is_multiple_choice", False)
     
     # 점수에 따른 색상 설정
-    score = st.session_state.score
+    score = st.session_state.get("score", 0)
     score_color = "success" if score == 100 else "error"
     
     # 정답/오답 표시
