@@ -16,7 +16,7 @@ def debug_problems_sheet():
         return
     
     # 스프레드시트 ID 설정
-    spreadsheet_id = "1C-LBiJX_ewRS-bJgY2eIKkn9dijAOPAAJuM_72izGA"
+    spreadsheet_id = "1C-LBiJX_ewRS-bJgY2eIKkn9diIAO0PAAJuM_72izGA"
     print(f"확인할 스프레드시트 ID: {spreadsheet_id}")
     
     try:
