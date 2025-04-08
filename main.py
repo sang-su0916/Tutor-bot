@@ -98,9 +98,15 @@ if check_reset_command() or "initialized" not in st.session_state:
     st.session_state.initialized = True
     st.session_state.page = "intro"
     st.session_state.student_answer = None
+    # 초기화 완료 표시
+    st.session_state.setup_complete = True
 
 def intro_page():
     """시작 페이지"""
+    # 화면 초기화 방지를 위한 세션 상태 확인
+    if "setup_complete" not in st.session_state:
+        st.session_state.setup_complete = True
+        
     st.title("GPT 학습 피드백 시스템")
     st.markdown("#### 우리 학원 전용 AI 튜터")
     
@@ -149,6 +155,10 @@ def intro_page():
 
 def student_login_page():
     """학생 로그인 페이지"""
+    # 화면 초기화 방지를 위한 세션 상태 확인
+    if "setup_complete" not in st.session_state:
+        st.session_state.setup_complete = True
+        
     st.title("학생 로그인")
     
     # 등록된 학생 목록 가져오기
@@ -198,6 +208,9 @@ def student_login_page():
                                 st.session_state.previous_problems = set()
                                 st.session_state.current_round = 1
                                 st.session_state.page = "student_dashboard"
+                                
+                                # 세션 지속을 위한 플래그
+                                st.session_state.login_complete = True
                                 
                                 st.rerun()
                     else:
@@ -256,6 +269,10 @@ def manual_login():
 
 def student_dashboard():
     """학생 대시보드 페이지"""
+    # 화면 초기화 방지를 위한 세션 상태 확인
+    if "setup_complete" not in st.session_state:
+        st.session_state.setup_complete = True
+    
     if not hasattr(st.session_state, 'student_id') or st.session_state.student_id is None:
         st.error("로그인 정보가 없습니다.")
         if st.button("로그인 페이지로 돌아가기"):
@@ -300,11 +317,17 @@ def student_dashboard():
                 
             st.session_state.all_problems_loaded = False
             st.session_state.page = "exam_page"
+            
+            # 시험 시작 표시 - 세션 유지 플래그
+            st.session_state.exam_start_flag = True
+            
             st.rerun()
     
     with col2:
         if st.button("📊 나의 성적 분석", use_container_width=True):
             st.session_state.page = "my_performance"
+            # 성적 분석 페이지 전환 플래그
+            st.session_state.perf_page_active = True
             st.rerun()
     
     # 로그아웃 버튼
@@ -314,6 +337,7 @@ def student_dashboard():
             if key != "initialized" and key != "page":
                 del st.session_state[key]
         st.session_state.page = "intro"
+        st.session_state.setup_complete = True
         st.rerun()
 
 def load_exam_problems(student_id, student_grade, problem_count=20):
@@ -492,6 +516,10 @@ def generate_dummy_problems(student_grade, count=20):
 
 def exam_page():
     """시험 페이지 - 모든 문제를 한 페이지에 표시합니다."""
+    # 화면 초기화 방지를 위한 세션 상태 확인
+    if "exam_start_flag" not in st.session_state:
+        st.session_state.exam_start_flag = True
+    
     if not hasattr(st.session_state, 'student_id') or st.session_state.student_id is None:
         st.error("로그인 정보가 없습니다.")
         if st.button("로그인 페이지로 돌아가기"):
@@ -541,12 +569,60 @@ def exam_page():
     st.markdown(f"### 남은 시간: {minutes:02d}:{seconds:02d}")
     st.markdown(f"학생: {st.session_state.student_name} | 학년: {st.session_state.student_grade} | 실력등급: {st.session_state.student_level}")
     
-    # 자동 타이머 업데이트 (3초마다)
-    st.write(f'<meta http-equiv="refresh" content="3">', unsafe_allow_html=True)
+    # 자동 타이머 업데이트 스크립트
+    # 페이지 자체는 새로고침하지 않고 시간만 업데이트
+    timer_js = f"""
+    <script>
+        // 시작 시간 설정
+        var startTime = {st.session_state.exam_start_time * 1000};
+        var timeLimit = {st.session_state.exam_time_limit * 1000};
+        
+        // 시간 업데이트 함수
+        function updateTimer() {{
+            var now = new Date().getTime();
+            var elapsed = now - startTime;
+            var remaining = Math.max(0, timeLimit - elapsed);
+            
+            // 남은 시간 계산
+            var minutes = Math.floor(remaining / 60000);
+            var seconds = Math.floor((remaining % 60000) / 1000);
+            
+            // 표시 형식 설정
+            var timeString = String(minutes).padStart(2, '0') + ":" + String(seconds).padStart(2, '0');
+            
+            // 타이머 요소 업데이트
+            var timerElement = document.querySelector('h3');
+            if (timerElement) {{
+                timerElement.textContent = "남은 시간: " + timeString;
+            }}
+            
+            // 시간이 다 되면 자동 제출
+            if (remaining <= 0) {{
+                // 3초 후 페이지 새로고침 (자동 제출을 위한 시간차)
+                setTimeout(function() {{
+                    window.location.reload();
+                }}, 3000);
+                return;
+            }}
+            
+            // 1초마다 업데이트
+            setTimeout(updateTimer, 1000);
+        }}
+        
+        // 타이머 시작
+        updateTimer();
+    </script>
+    """
+    
+    st.markdown(timer_js, unsafe_allow_html=True)
     
     # 남은 시간이 0이면 자동 제출
     if remaining_time <= 0 and 'exam_submitted' not in st.session_state:
         st.warning("시험 시간이 종료되었습니다! 자동으로 제출됩니다.")
+        
+        # 자동 제출 처리 - 결과 생성 먼저 수행
+        process_exam_results()
+        
         st.session_state.exam_submitted = True
         st.session_state.page = "exam_score"
         st.rerun()
@@ -560,7 +636,7 @@ def exam_page():
         st.warning(f"현재 {actual_problem_count}개의 문제만 로드되었습니다.")
     
     # 폼 생성
-    with st.form("exam_form"):
+    with st.form("exam_form", clear_on_submit=False):
         # 각 문제 표시
         for idx, problem in enumerate(st.session_state.exam_problems, 1):
             # 문제 ID
@@ -635,8 +711,13 @@ def exam_page():
         if submit_button:
             # 제출 처리
             with st.spinner("답안 제출 중..."):
+                # 결과 처리 - 별도 함수로 추출
+                process_exam_results()
+                
                 st.session_state.exam_submitted = True
                 st.session_state.page = "exam_score"
+                # 세션 지속을 위한 플래그
+                st.session_state.submit_complete = True
                 st.rerun()
     
     # 대시보드로 돌아가기
@@ -650,282 +731,112 @@ def exam_page():
             st.session_state.page = "student_dashboard"
             st.rerun()
 
-def my_performance_page():
-    """학생 성적 분석 페이지"""
-    if not hasattr(st.session_state, 'student_id') or st.session_state.student_id is None:
-        st.error("로그인 정보가 없습니다.")
-        if st.button("로그인 페이지로 돌아가기"):
-            st.session_state.page = "intro"
-            st.rerun()
-        return
-        
-    # 학생 성적 대시보드 표시
-    show_student_performance_dashboard(
-        st.session_state.student_id,
-        st.session_state.get("student_name", "학생"),
-        st.session_state.get("student_grade", ""),
-        st.session_state.get("student_level", "")
-    )
-    
-    # 대시보드로 돌아가기 버튼
-    if st.button("← 대시보드로 돌아가기"):
-        st.session_state.page = "student_dashboard"
-        st.rerun()
-
-def result_page():
-    """결과 페이지"""
-    st.title("채점 결과")
-    
-    if not hasattr(st.session_state, 'current_problem') or st.session_state.current_problem is None:
-        st.error("문제 정보를 찾을 수 없습니다.")
-        if st.button("대시보드로 돌아가기"):
-            st.session_state.page = "student_dashboard"
-            st.rerun()
+def process_exam_results():
+    """시험 결과를 처리하고 세션에 저장합니다."""
+    # 이미 처리된 경우 건너뛰기
+    if 'exam_results' in st.session_state:
         return
     
-    problem = st.session_state.current_problem
-    student_answer = st.session_state.get("student_answer", "")
-    
-    # 문제 정보 표시
-    st.markdown(f"**과목**: {problem['과목']} | **학년**: {problem['학년']} | **유형**: {problem['문제유형']} | **난이도**: {problem['난이도']}")
-    
-    # 진행 상태 표시
-    if 'problem_count' in st.session_state and 'max_problems' in st.session_state:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown(f"**진행상황**: {st.session_state.problem_count}/{st.session_state.max_problems} 문제")
-            
-        with col2:
-            # 남은 시간 표시 (있는 경우)
-            if 'start_time' in st.session_state and 'time_limit' in st.session_state:
-                elapsed_time = time.time() - st.session_state.start_time
-                remaining_time = max(0, st.session_state.time_limit - elapsed_time)
-                mins, secs = divmod(int(remaining_time), 60)
-                time_str = f"{mins:02d}:{secs:02d}"
-                st.markdown(f"**남은 시간**: {time_str}")
-    
-    # 문제 내용
-    st.subheader("문제")
-    st.markdown(problem.get("문제내용", "문제 내용을 불러올 수 없습니다."))
-    
-    # 문제 유형 확인 (객관식 또는 단답형)
-    is_multiple_choice = st.session_state.get("is_multiple_choice", False)
-    
-    # 점수에 따른 색상 설정
-    score = st.session_state.get("score", 0)
-    score_color = "success" if score == 100 else "error"
-    
-    # 정답/오답 표시
-    if is_multiple_choice:
-        # 객관식 문제의 경우 보기 텍스트 찾기
-        answer_text = ""
-        correct_text = ""
-        correct_option = problem.get("정답", "")
+    try:
+        results = {}
+        total_score = 0
+        correct_count = 0
         
-        for i in range(1, 6):
-            option_key = f"보기{i}"
-            if option_key in problem and problem[option_key]:
-                if option_key == student_answer:
-                    answer_text = problem[option_key]
-                if option_key == correct_option:
-                    correct_text = problem[option_key]
-        
-        # 학생 답안 표시 컨테이너
-        st.container(height=None, border=True)
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("#### 제출한 답안")
-            st.markdown(f"**{student_answer}**: {answer_text}")
-        with col2:
-            st.markdown("#### 정답")
-            st.markdown(f"**{correct_option}**: {correct_text}")
-        
-        # 점수 표시
-        if score == 100:
-            st.success("정답입니다! 100점")
-        else:
-            st.error(f"틀렸습니다. {score}점")
-    else:
-        # 단답형 문제
-        correct_answer = problem.get("정답", "")
-        
-        # 학생 답안 표시 컨테이너
-        st.container(height=None, border=True)
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("#### 제출한 답안")
-            st.markdown(f"**{student_answer}**")
-        with col2:
-            st.markdown("#### 정답")
-            st.markdown(f"**{correct_answer}**")
-        
-        # 점수 표시
-        if score == 100:
-            st.success("정답입니다! 100점")
-        else:
-            st.error(f"틀렸습니다. {score}점")
-    
-    # 해설과 피드백
-    st.subheader("문제 해설")
-    st.markdown(problem.get("해설", ""))
-    
-    # AI 피드백
-    feedback = st.session_state.feedback
-    if feedback:
-        st.subheader("AI 튜터 피드백")
-        with st.container(height=None, border=True):
-            st.markdown(feedback)
-    
-    # 키워드 표시
-    if "키워드" in problem and problem["키워드"]:
-        st.markdown(f"**학습 키워드**: {problem['키워드']}")
-    
-    # 버튼들
-    st.write("")  # 공백 추가
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("다음 문제", key="next_problem_btn", use_container_width=True):
-            # 다음 문제를 위한 상태 초기화
-            st.session_state.current_problem = None
-            st.session_state.submitted = False
-            st.session_state.feedback = None
-            st.session_state.score = None
-            st.session_state.show_result = False
-            
-            # 문제 카운트 증가
-            if 'problem_count' in st.session_state:
-                st.session_state.problem_count += 1
+        # 모든 답안 채점
+        for problem_id, problem_data in st.session_state.student_answers.items():
+            if "제출답안" not in problem_data or not problem_data["제출답안"]:
+                # 답안이 없는 경우 오답 처리
+                results[problem_id] = {
+                    'score': 0,
+                    'is_correct': False,
+                    'student_answer': "",
+                    'correct_answer': problem_data.get('정답', '')
+                }
+                continue
                 
-            st.rerun()
-    
-    with col2:
-        if st.button("나의 성적 분석", key="view_perf_btn", use_container_width=True):
-            st.session_state.page = "my_performance"
-            st.rerun()
-    
-    with col3:
-        if st.button("대시보드", key="to_dashboard_btn", use_container_width=True):
-            st.session_state.page = "student_dashboard"
-            st.rerun()
-
-def exam_result_page():
-    """시험 결과 페이지"""
-    if not hasattr(st.session_state, 'student_id') or st.session_state.student_id is None:
-        st.error("로그인 정보가 없습니다.")
-        if st.button("로그인 페이지로 돌아가기"):
-            st.session_state.page = "intro"
-            st.rerun()
-        return
-    
-    st.title("시험 완료!")
-    
-    # 시간 및 문제 수 표시
-    if 'start_time' in st.session_state and 'time_limit' in st.session_state:
-        elapsed_time = time.time() - st.session_state.start_time
-        mins, secs = divmod(int(min(elapsed_time, st.session_state.time_limit)), 60)
-        time_str = f"{mins:02d}:{secs:02d}"
-        
-        st.markdown(f"### 시험 시간: {time_str}")
-        
-    st.markdown(f"### 총 문제 수: {len(st.session_state.get('student_answers', {}))}/{st.session_state.get('max_problems', 20)}")
-    
-    # 시험지 제출 확인
-    st.subheader("시험지를 제출하시겠습니까?")
-    st.markdown("모든 답안을 제출하고 채점을 진행합니다.")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("시험지 제출하기", use_container_width=True, key="final_submit"):
-            # 모든 문제 채점 및 결과 저장
-            with st.spinner("채점 중..."):
-                try:
-                    results = {}
-                    total_score = 0
-                    correct_count = 0
-                    
-                    # 모든 답안 채점
-                    for problem_id, problem_data in st.session_state.student_answers.items():
-                        student_answer = problem_data['제출답안']
-                        correct_answer = problem_data['정답']
-                        
-                        # 단답형 또는 객관식 여부 확인
-                        is_objective = correct_answer.startswith("보기")
-                        
-                        if is_objective:
-                            # 객관식 문제는 정확히 일치해야 함
-                            is_correct = (student_answer == correct_answer)
-                        else:
-                            # 단답형 문제는 대소문자, 공백 무시
-                            normalized_student = student_answer.lower().strip() if student_answer else ""
-                            normalized_correct = correct_answer.lower().strip()
-                            is_correct = (normalized_student == normalized_correct)
-                        
-                        score = 100 if is_correct else 0
-                        
-                        if is_correct:
-                            correct_count += 1
-                        
-                        results[problem_id] = {
-                            'score': score,
-                            'is_correct': is_correct,
-                            'student_answer': student_answer,
-                            'correct_answer': correct_answer
-                        }
-                        
-                        # 학생 취약점 업데이트
-                        keywords = problem_data['키워드'].split(',')
-                        update_problem_stats(
-                            st.session_state.student_id,
-                            problem_id,
-                            problem_data['키워드'],
-                            is_correct
-                        )
-                    
-                    # 총점 계산 (백분율)
-                    if results:
-                        total_score = (correct_count / len(results)) * 100
-                    
-                    # 결과 저장
-                    st.session_state.exam_results = {
-                        'details': results,
-                        'total_score': total_score,
-                        'correct_count': correct_count,
-                        'total_problems': len(results)
-                    }
-                    
-                    # 성적 분석 페이지로 이동
-                    st.session_state.page = "exam_score"
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"채점 중 오류가 발생했습니다: {str(e)}")
-    
-    with col2:
-        if st.button("취소하고 계속 풀기", use_container_width=True):
-            # 다음 문제로 이동
-            st.session_state.page = "problem"
-            st.session_state.submitted = False
-            st.session_state.exam_completed = False
-            st.rerun()
-    
-    # 학생 답안 리스트 표시
-    st.markdown("### 제출할 답안")
-    
-    for idx, (problem_id, problem_data) in enumerate(st.session_state.student_answers.items(), 1):
-        with st.expander(f"문제 {idx}: {problem_data['과목']} ({problem_data['문제유형']})"):
-            st.markdown(problem_data['문제'])
+            student_answer = problem_data['제출답안']
+            correct_answer = problem_data['정답']
             
-            if '보기정보' in problem_data and any(problem_data['보기정보'].values()):
-                st.markdown("#### 보기:")
-                for option_key, option_text in problem_data['보기정보'].items():
-                    if option_text:
-                        st.markdown(f"**{option_key}**: {option_text}")
+            # 단답형 또는 객관식 여부 확인
+            is_objective = correct_answer.startswith("보기")
             
-            st.markdown(f"**제출한 답안**: {problem_data['제출답안']}")
+            if is_objective:
+                # 객관식 문제는 정확히 일치해야 함
+                is_correct = (student_answer == correct_answer)
+            else:
+                # 단답형 문제는 대소문자, 공백 무시
+                normalized_student = student_answer.lower().strip() if student_answer else ""
+                normalized_correct = correct_answer.lower().strip()
+                is_correct = (normalized_student == normalized_correct)
+            
+            score = 100 if is_correct else 0
+            
+            if is_correct:
+                correct_count += 1
+            
+            results[problem_id] = {
+                'score': score,
+                'is_correct': is_correct,
+                'student_answer': student_answer,
+                'correct_answer': correct_answer
+            }
+            
+            # 학생 취약점 업데이트 시도
+            try:
+                keywords = problem_data.get('키워드', '')
+                update_problem_stats(
+                    st.session_state.student_id,
+                    problem_id,
+                    keywords,
+                    is_correct
+                )
+            except Exception as e:
+                # 취약점 업데이트 실패해도 계속 진행
+                print(f"취약점 업데이트 실패: {str(e)}")
+        
+        # 총점 계산 (백분율)
+        total_problems = len(st.session_state.student_answers)
+        if total_problems > 0:
+            total_score = (correct_count / total_problems) * 100
+        
+        # 결과 저장
+        st.session_state.exam_results = {
+            'details': results,
+            'total_score': total_score,
+            'correct_count': correct_count,
+            'total_problems': total_problems
+        }
+        
+        # Google Sheets에 결과 저장 시도
+        try:
+            from sheets_utils import save_student_result
+            save_student_result(
+                st.session_state.student_id,
+                st.session_state.student_name,
+                st.session_state.student_grade,
+                st.session_state.exam_results
+            )
+        except Exception as e:
+            print(f"Google Sheets에 결과 저장 실패: {str(e)}")
+        
+        return True
+    except Exception as e:
+        print(f"시험 결과 처리 오류: {str(e)}")
+        # 오류 발생 시 기본값 설정
+        st.session_state.exam_results = {
+            'details': {},
+            'total_score': 0,
+            'correct_count': 0,
+            'total_problems': len(st.session_state.student_answers) 
+        }
+        return False
 
 def exam_score_page():
     """시험 점수 결과 페이지"""
+    # 화면 초기화 방지를 위한 세션 상태 확인
+    if "submit_complete" not in st.session_state:
+        st.session_state.submit_complete = True
+        
     if not hasattr(st.session_state, 'student_id') or st.session_state.student_id is None:
         st.error("로그인 정보가 없습니다.")
         if st.button("로그인 페이지로 돌아가기"):
@@ -939,6 +850,19 @@ def exam_score_page():
             st.session_state.page = "exam_page"
             st.rerun()
         return
+    
+    if 'exam_results' not in st.session_state:
+        # 결과가 없는 경우 다시 생성 시도
+        with st.spinner("시험 결과를 처리 중입니다..."):
+            process_exam_results()
+            
+        # 여전히 결과가 없는 경우
+        if 'exam_results' not in st.session_state:
+            st.error("시험 결과를 처리할 수 없습니다. 대시보드로 돌아가세요.")
+            if st.button("대시보드로 돌아가기"):
+                st.session_state.page = "student_dashboard"
+                st.rerun()
+            return
     
     st.title("시험 결과")
     
