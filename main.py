@@ -83,6 +83,47 @@ def check_reset_command():
         pass
     return False
 
+def check_api_connections():
+    """API 연결 상태를 확인합니다."""
+    status = {
+        "google_sheets": False,
+        "gemini": False,
+        "error_messages": []
+    }
+    
+    # Google Sheets API 연결 확인
+    try:
+        sheet = connect_to_sheets()
+        if sheet:
+            # 테스트 워크시트 접근 시도
+            try:
+                sheet.worksheet("students")
+                status["google_sheets"] = True
+            except Exception as e:
+                status["error_messages"].append(f"Google Sheets 워크시트 접근 오류: {str(e)}")
+        else:
+            status["error_messages"].append("Google Sheets 연결 실패")
+    except Exception as e:
+        status["error_messages"].append(f"Google Sheets 연결 오류: {str(e)}")
+    
+    # Gemini API 연결 확인
+    try:
+        if "GOOGLE_API_KEY" in st.secrets:
+            try:
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                # 간단한 프롬프트로 테스트
+                response = model.generate_content("Hello")
+                if response:
+                    status["gemini"] = True
+            except Exception as e:
+                status["error_messages"].append(f"Gemini API 호출 오류: {str(e)}")
+        else:
+            status["error_messages"].append("Gemini API 키가 설정되지 않음")
+    except Exception as e:
+        status["error_messages"].append(f"Gemini API 초기화 오류: {str(e)}")
+    
+    return status
+
 def initialize_session_state():
     """세션 상태를 초기화합니다."""
     if check_reset_command() or "initialized" not in st.session_state:
@@ -115,25 +156,29 @@ def intro_page():
     
     # API 연결 상태 확인 (옵션)
     with st.expander("API 연결 상태"):
-        api_status = check_api_connections()
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if api_status["google_sheets"]:
-                st.success("Google Sheets: 연결됨 ✅")
-            else:
-                st.error("Google Sheets: 연결 안됨 ❌")
-        
-        with col2:
-            if api_status["gemini"]:
-                st.success("Gemini API: 연결됨 ✅")
-            else:
-                st.error("Gemini API: 연결 안됨 ❌")
-        
-        if api_status["error_messages"]:
-            st.markdown("#### 오류 메시지")
-            for msg in api_status["error_messages"]:
-                st.warning(msg)
+        try:
+            api_status = check_api_connections()
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if api_status["google_sheets"]:
+                    st.success("Google Sheets: 연결됨 ✅")
+                else:
+                    st.error("Google Sheets: 연결 안됨 ❌")
+            
+            with col2:
+                if api_status["gemini"]:
+                    st.success("Gemini API: 연결됨 ✅")
+                else:
+                    st.error("Gemini API: 연결 안됨 ❌")
+            
+            if api_status["error_messages"]:
+                st.markdown("#### 오류 메시지")
+                for msg in api_status["error_messages"]:
+                    st.warning(msg)
+        except Exception as e:
+            st.error(f"API 연결 상태 확인 중 오류 발생: {str(e)}")
+            st.info("계속해서 시스템을 사용할 수 있습니다.")
     
     col1, col2 = st.columns(2)
     
@@ -1212,13 +1257,16 @@ def main():
     elif st.session_state.page == "student_dashboard":
         student_dashboard()
     elif st.session_state.page == "problem":
-        problem_page()
+        # problem_page 함수가 정의되지 않았으므로 학생 대시보드로 리디렉션
+        st.session_state.page = "student_dashboard"
+        st.rerun()
     elif st.session_state.page == "exam_page":
         exam_page()
     elif st.session_state.page == "my_performance":
         my_performance_page()
     elif st.session_state.page == "exam_result":
-        exam_result_page()
+        # exam_result_page 함수가 정의되지 않았으므로 exam_score_page로 대체
+        exam_score_page()
     elif st.session_state.page == "exam_score":
         exam_score_page()
     else:
