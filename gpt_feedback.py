@@ -3,225 +3,200 @@ import time
 import google.generativeai as genai
 from datetime import datetime
 
-def generate_feedback(question, student_answer, correct_answer, explanation):
+def generate_feedback(problem, student_answer, student_id="", student_name=""):
     """
-    Gemini를 사용하여 학생의 답안을 채점하고 피드백을 생성합니다.
+    학생의 답변에 대한 피드백을 생성하는 함수
+    
+    Args:
+        problem: 문제 정보 딕셔너리
+        student_answer: 학생이 제출한 답변
+        student_id: 학생 ID (선택)
+        student_name: 학생 이름 (선택)
+    
+    Returns:
+        생성된 피드백 텍스트
     """
     try:
-        # API 키 확인
-        if "GOOGLE_API_KEY" not in st.secrets:
-            # 단답형 또는 객관식 여부 확인
-            is_objective = correct_answer.startswith("보기")
-            
-            # 기본 채점 로직
-            if is_objective:
-                # 객관식: 정확히 일치해야 함
-                is_correct = (student_answer == correct_answer)
-            else:
-                # 단답형: 대소문자 및 공백 무시하고 비교
-                normalized_student = student_answer.lower().strip() if student_answer else ""
-                normalized_correct = correct_answer.lower().strip()
-                is_correct = (normalized_student == normalized_correct)
-            
-            score = 100 if is_correct else 0
-            return score, "AI 튜터 연결에 실패했습니다. 기본 채점 결과만 제공됩니다."
+        problem_type = problem.get("문제유형", "객관식")
         
-        # Gemini API 키 설정
-        genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-        
-        # 단답형 또는 객관식 여부 확인
-        is_objective = correct_answer.startswith("보기")
-        
-        # 프롬프트 구성
-        if is_objective:
-            # 객관식 문제 프롬프트
+        # 객관식 문제
+        if problem_type == "객관식":
             prompt = f"""
-            당신은 영어 교육 전문가이자 학생들에게 상세하고 유익한 피드백을 제공하는 교육 튜터입니다.
+            당신은 학생들에게 고품질의 교육적 피드백을 제공하는 교육 전문가 AI입니다. 항상 일관되고 상세한 피드백을 제공해야 합니다.
             
-            [문제]
-            {question}
-
-            [학생 답안]
-            {student_answer}
-
-            [정답]
-            {correct_answer}
-
-            [해설]
-            {explanation}
-
-            위 정보를 바탕으로 다음과 같이 명확하고 교육적인 첨삭 피드백을 제공해주세요:
-
-            1. 학생의 답안이 정답인지 오답인지 판단하고 점수(100점 또는 0점)를 부여하세요.
-            2. 학생이 선택한 답안에 대해 상세한 분석을 제공하세요.
-            3. 오답일 경우, 왜 틀렸는지 명확하게 설명하고 정답과의 차이점을 설명하세요.
-            4. 해당 문제와 관련된 핵심 개념이나 문법 규칙을 설명하세요.
-            5. 유사한 문제를 해결하기 위한 학습 전략이나 팁을 제공하세요.
-            6. 학생의 이해도를 높이기 위한 추가 예제나 설명을 제공하세요.
-            7. 격려와 동기부여의 메시지를 포함하세요.
-
-            답변은 다음 형식으로 작성해주세요:
-            점수: [100 또는 0]
+            ## 학생 정보
+            {f'학생 ID: {student_id}' if student_id else ''}
+            {f'학생 이름: {student_name}' if student_name else ''}
             
-            [첨삭 피드백 - 2-3문단의 상세한 내용]
+            ## 문제 정보
+            과목: {problem.get('과목', '알 수 없음')}
+            학년: {problem.get('학년', '알 수 없음')}
+            난이도: {problem.get('난이도', '알 수 없음')}
+            문제 유형: 객관식
+            
+            ## 문제 내용
+            {problem.get('문제내용', '문제 내용 없음')}
+            
+            ## 보기
+            {problem.get('보기', '보기 없음')}
+            
+            ## 학생 답변
+            학생이 선택한 답: {student_answer}
+            
+            ## 정답
+            정답: {problem.get('정답', '정답 없음')}
+            
+            ## 해설
+            {problem.get('해설', '해설 없음')}
+            
+            ## 지시사항
+            1. 학생의 답안을 평가하고 점수를 부여하세요 (맞았으면 100점, 틀렸으면 0점).
+            2. 각 보기에 대해 왜 그것이 정답인지 또는 오답인지 상세히 분석하세요.
+            3. 학생이 선택한 답변이 왜 맞았는지 또는 틀렸는지 구체적으로 설명하세요.
+            4. 틀린 경우, 학생이 왜 그런 선택을 했을지 분석하고, 해당 개념을 더 잘 이해할 수 있는 방법을 제안하세요.
+            5. 관련된 핵심 개념에 대한 간결하지만 명확한 설명을 제공하세요.
+            6. 유사한 문제를 풀 때 도움이 될 문제 해결 전략을 제시하세요.
+            7. 학생에게 격려와 동기부여 메시지를 포함하세요.
+            8. 표, 단계별 설명 등 다양한 형식을 활용하여 이해하기 쉽게 설명하세요.
+            
+            ## 피드백 형식
+            반드시 다음과 같은 형식으로 답변해주세요:
+            
+            ## 점수: [0 또는 100]
+            
+            ## 정답 분석
+            [정답과 학생 답변에 대한 자세한 분석]
+            
+            ## 핵심 개념 설명
+            [관련된 핵심 개념에 대한 명확한 설명]
+            
+            ## 학습 조언
+            [앞으로의 학습에 도움이 될 구체적인 조언]
+            
+            ## 격려 메시지
+            [학생에게 전하는 긍정적인 메시지]
             """
+            
+        # 주관식 문제
         else:
-            # 단답형 문제 프롬프트
             prompt = f"""
-            당신은 영어 교육 전문가이자 학생들에게 상세하고 유익한 피드백을 제공하는 교육 튜터입니다.
+            당신은 학생들에게 고품질의 교육적 피드백을 제공하는 교육 전문가 AI입니다. 항상 일관되고 상세한 피드백을 제공해야 합니다.
             
-            [문제]
-            {question}
-
-            [학생 답안]
+            ## 학생 정보
+            {f'학생 ID: {student_id}' if student_id else ''}
+            {f'학생 이름: {student_name}' if student_name else ''}
+            
+            ## 문제 정보
+            과목: {problem.get('과목', '알 수 없음')}
+            학년: {problem.get('학년', '알 수 없음')}
+            난이도: {problem.get('난이도', '알 수 없음')}
+            문제 유형: 주관식
+            
+            ## 문제 내용
+            {problem.get('문제내용', '문제 내용 없음')}
+            
+            ## 학생 답변
             {student_answer}
-
-            [정답]
-            {correct_answer}
-
-            [해설]
-            {explanation}
-
-            위 정보를 바탕으로 다음과 같이 명확하고 교육적인 첨삭 피드백을 제공해주세요:
-
-            1. 학생의 답안이 정답인지 오답인지 판단하세요. (대소문자, 앞뒤 공백은 무시하고 채점)
-            2. 정답 여부에 따라 점수(100점 또는 0점)를 부여하세요.
-            3. 학생의 답안에 대한 구체적인 분석을 제공하세요.
-            4. 오답일 경우:
-               - 왜 틀렸는지 명확하게 설명하세요
-               - 정답과의 차이점을 상세히 분석하세요
-               - 오답을 선택한 이유에 대한 가능한 오해를 설명하세요
-            5. 해당 문제와 관련된 핵심 개념, 문법 규칙, 어휘 지식을 설명하세요.
-            6. 이 개념을 더 잘 이해하기 위한 추가 예시나 연습 방법을 제안하세요.
-            7. 격려와 동기부여의 메시지로 마무리하세요.
-
-            답변은 다음 형식으로 작성해주세요:
-            점수: [100 또는 0]
             
-            [첨삭 피드백 - 2-3문단의 상세한 내용]
+            ## 모범 답안
+            {problem.get('정답', '정답 없음')}
+            
+            ## 해설
+            {problem.get('해설', '해설 없음')}
+            
+            ## 지시사항
+            1. 학생의 답안을 상세히 분석하고 0-100점 사이의 점수를 부여하세요. 주관식 답변 채점 기준은 다음과 같습니다:
+               - 90-100점: 완벽하게 이해하고 모든 핵심 개념을 포함한 탁월한 답변
+               - 70-89점: 대부분의 핵심 개념을 이해하고 있으나 일부 설명이 미흡한 우수한 답변
+               - 50-69점: 기본 개념은 이해했으나 중요한 부분이 누락된 보통 수준의 답변
+               - 30-49점: 일부 관련 개념을 포함하지만 주요 오류가 있는 미흡한 답변
+               - 0-29점: 핵심 개념을 거의 이해하지 못한 부족한 답변
+            
+            2. 학생 답변의 강점과 약점을 구체적으로 분석하세요:
+               - 정확한 개념이나 잘 표현된 부분 지적
+               - 누락된 핵심 개념이나 오해한 부분 지적
+               - 표현 방식이나 논리 구조에 대한 피드백
+            
+            3. 모범 답안과 비교하여 학생 답변의 차이점을 명확히 설명하세요.
+            
+            4. 잘못된 개념이나 오해가 있다면 올바른 설명과 함께 교정하세요.
+            
+            5. 해당 주제에 대한 이해를 높이기 위한 구체적인 학습 전략, 추가 자료, 또는 연습 방법을 제안하세요.
+            
+            6. 학생에게 격려와 동기부여 메시지를 포함하세요.
+            
+            ## 피드백 형식
+            반드시 다음과 같은 형식으로 답변해주세요:
+            
+            ## 점수: [0-100]
+            
+            ## 답변 분석
+            [학생 답변의 강점과 약점에 대한 상세한 분석]
+            
+            ## 핵심 개념 설명
+            [학생이 놓친 개념이나 오해한 부분에 대한 명확한 설명]
+            
+            ## 모범 답안 비교
+            [학생 답변과 모범 답안의 차이점 분석]
+            
+            ## 학습 조언
+            [앞으로의 학습에 도움이 될 구체적인 조언]
+            
+            ## 격려 메시지
+            [학생에게 전하는 긍정적인 메시지]
             """
-
-        # Gemini API 호출
-        try:
-            # 모델 생성 - gemini-1.5-flash 모델 사용 (안정적인 모델)
-            generation_config = {
-                "temperature": 0.7,
-                "top_p": 0.95,
-                "top_k": 40,
-                "max_output_tokens": 800,
-            }
-            
-            safety_settings = [
-                {
-                    "category": "HARM_CATEGORY_HARASSMENT",
-                    "threshold": "BLOCK_NONE",
-                },
-                {
-                    "category": "HARM_CATEGORY_HATE_SPEECH",
-                    "threshold": "BLOCK_NONE",
-                },
-                {
-                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                    "threshold": "BLOCK_NONE",
-                },
-                {
-                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                    "threshold": "BLOCK_NONE",
-                },
-            ]
-            
-            model = genai.GenerativeModel(
-                model_name="gemini-1.5-flash",
-                generation_config=generation_config,
-                safety_settings=safety_settings
-            )
-            
-            # API 호출
-            response = model.generate_content(prompt)
-            
-            # 응답 파싱
-            output = response.text
-        except Exception as api_error:
-            # API 호출 실패 시 기본 응답 생성
-            print(f"Gemini API 호출 실패: {api_error}")
-            if is_objective:
-                # 객관식: 정확히 일치해야 함
-                is_correct = (student_answer == correct_answer)
-            else:
-                # 단답형: 대소문자 및 공백 무시하고 비교
-                normalized_student = student_answer.lower().strip() if student_answer else ""
-                normalized_correct = correct_answer.lower().strip()
-                is_correct = (normalized_student == normalized_correct)
-            
-            score = 100 if is_correct else 0
-            
-            if score == 100:
-                return 100, "정답입니다! (API 호출 실패로 기본 피드백만 제공됩니다)"
-            else:
-                return 0, "틀렸습니다. (API 호출 실패로 기본 피드백만 제공됩니다)"
         
-        try:
-            # 점수와 피드백 분리
-            score_line = [line for line in output.split('\n') if line.startswith('점수:')]
-            if not score_line:
-                # 점수 라인을 찾지 못하면 기본 채점 로직 사용
-                if is_objective:
-                    is_correct = (student_answer == correct_answer)
+        # Gemini 모델 호출 - 최적화된 설정
+        model = genai.GenerativeModel('gemini-1.5-flash',
+                                     safety_settings=[
+                                         {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+                                         {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+                                         {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+                                         {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"}
+                                     ],
+                                     generation_config={
+                                         "temperature": 0.3,  # 더 일관된 결과를 위해 낮은 온도 설정
+                                         "top_p": 0.92,
+                                         "top_k": 40,
+                                         "max_output_tokens": 2048,
+                                         "response_mime_type": "text/plain",  # 텍스트 형식으로 일관되게 응답
+                                     })
+        
+        # 최대 3번 재시도 로직 추가
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                response = model.generate_content(prompt)
+                feedback = response.text
+                
+                # 응답이 유효한지 확인
+                if feedback and len(feedback) > 50:  # 최소 응답 길이 확인
+                    break
                 else:
-                    normalized_student = student_answer.lower().strip() if student_answer else ""
-                    normalized_correct = correct_answer.lower().strip()
-                    is_correct = (normalized_student == normalized_correct)
-                
-                score = 100 if is_correct else 0
-                
-                if '정답' in output.lower() and '틀' not in output.lower():
-                    score = 100
-                elif '틀' in output.lower():
-                    score = 0
-            else:
-                score_line = score_line[0]
-                score = 100 if '100' in score_line else 0
-            
-            feedback_lines = [line for line in output.split('\n') if not line.startswith('점수:')]
-            feedback = '\n'.join(feedback_lines).replace('피드백:', '').strip()
-            
-            return score, feedback
-            
-        except Exception as parse_error:
-            # 응답 파싱 실패 시 기본 응답 생성
-            # 단답형 또는 객관식 여부에 따라 다른 기본 채점 로직 적용
-            if is_objective:
-                # 객관식: 정확히 일치해야 함
-                is_correct = (student_answer == correct_answer)
-            else:
-                # 단답형: 대소문자 및 공백 무시하고 비교
-                normalized_student = student_answer.lower().strip() if student_answer else ""
-                normalized_correct = correct_answer.lower().strip()
-                is_correct = (normalized_student == normalized_correct)
-            
-            score = 100 if is_correct else 0
-            
-            if score == 100:
-                return 100, "정답입니다! 해설을 읽고 개념을 더 깊이 이해해보세요."
-            else:
-                return 0, "틀렸습니다. 해설을 잘 읽고 다시 한 번 풀어보세요."
+                    retry_count += 1
+                    time.sleep(1)  # 재시도 전 잠시 대기
+            except Exception as e:
+                print(f"피드백 생성 시도 {retry_count+1} 실패: {str(e)}")
+                retry_count += 1
+                time.sleep(1)
         
+        # 결과 반환
+        if retry_count < max_retries:
+            return feedback
+        else:
+            raise Exception("최대 재시도 횟수 초과")
+    
     except Exception as e:
-        print(f"피드백 생성 중 오류: {e}")
-        # 단답형 또는 객관식 여부에 따라 다른 기본 채점 로직 적용
-        is_objective = correct_answer.startswith("보기")
-        if is_objective:
-            # 객관식: 정확히 일치해야 함
-            is_correct = (student_answer == correct_answer)
-        else:
-            # 단답형: 대소문자 및 공백 무시하고 비교
-            normalized_student = student_answer.lower().strip() if student_answer else ""
-            normalized_correct = correct_answer.lower().strip()
-            is_correct = (normalized_student == normalized_correct)
+        print(f"피드백 생성 중 오류 발생: {str(e)}")
+        return f"""
+        ## 점수: {'100' if problem.get('정답') == student_answer else '0'}
         
-        score = 100 if is_correct else 0
+        ## 피드백
+        현재 피드백 서비스에 일시적인 문제가 있습니다. 
+        기본적인 채점 결과만 제공해 드립니다.
         
-        if score == 100:
-            return 100, "정답입니다! (AI 튜터 연결에 문제가 있어 기본 채점 결과만 제공됩니다)"
-        else:
-            return 0, "틀렸습니다. (AI 튜터 연결에 문제가 있어 기본 채점 결과만 제공됩니다)" 
+        정답: {problem.get('정답', '정답 정보 없음')}
+        해설: {problem.get('해설', '해설 정보 없음')}
+        """
