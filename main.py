@@ -343,201 +343,6 @@ def student_dashboard():
         st.session_state.setup_complete = True
         st.rerun()
 
-def load_exam_problems(student_id, student_grade, problem_count=20):
-    """
-    시험에 사용할 문제를 학생 학년과 다양한 유형을 고려하여 로드합니다.
-    문제 ID를 추적하여 중복을 방지합니다.
-    """
-    # 이미 로드된 문제가 있고 충분한 경우 재사용
-    if ('exam_problems' in st.session_state and 
-        st.session_state.exam_problems and 
-        len(st.session_state.exam_problems) >= problem_count):
-        st.info("이미 로드된 문제를 사용합니다.")
-        return st.session_state.exam_problems
-    
-    # 사용된 문제 ID 세션 초기화
-    if 'used_problem_ids' not in st.session_state:
-        st.session_state.used_problem_ids = set()
-    
-    # 기존 시험 문제 ID 추적
-    if 'exam_problems' in st.session_state and st.session_state.exam_problems:
-        for problem in st.session_state.exam_problems:
-            if "문제ID" in problem:
-                st.session_state.used_problem_ids.add(problem["문제ID"])
-    
-    problems = []
-    attempts = 0
-    max_attempts = 100  # 최대 시도 횟수
-    
-    sheet = connect_to_sheets()
-    if not sheet:
-        st.error("Google Sheets 연결에 실패했습니다.")
-        return generate_dummy_problems(student_grade, problem_count)
-    
-    # 문제 워크시트에서 모든 문제 가져오기
-    try:
-        problems_ws = sheet.worksheet("problems")
-        all_problems = problems_ws.get_all_records()
-        st.success(f"{len(all_problems)}개의 문제를 성공적으로 로드했습니다.")
-    except Exception as e:
-        st.error(f"문제 데이터를 가져오는데 실패했습니다: {str(e)}")
-        return generate_dummy_problems(student_grade, problem_count)
-    
-    # 학년에 맞는 문제만 필터링
-    filtered_problems = []
-    
-    # 학년 정규화
-    normalized_student_grade = normalize_grade(student_grade)
-    if not normalized_student_grade:
-        st.warning("학년 정보가 유효하지 않습니다. 기본 문제를 사용합니다.")
-        normalized_student_grade = "중1"  # 기본값
-    
-    st.info(f"학년 '{student_grade}'를 '{normalized_student_grade}'로 정규화했습니다.")
-    
-    # 문제 유형 카운터 - 다양한 유형을 선택하기 위함
-    problem_type_count = {}
-    
-    for p in all_problems:
-        if ("문제ID" in p and "학년" in p and "문제내용" in p and "정답" in p):
-            # 문제 학년, 유형 정규화 및 비교
-            problem_grade = p.get("학년", "")
-            normalized_problem_grade = normalize_grade(problem_grade)
-            problem_type = p.get("문제유형", "객관식")
-            
-            if normalized_problem_grade == normalized_student_grade:
-                # 유효성 검사: 객관식이면 보기가 있어야 함
-                is_valid = True
-                
-                # 보기 정보 포맷팅 및 유효성 확인
-                if problem_type == "객관식":
-                    # 보기 정보 초기화 또는 재구성
-                    if "보기정보" not in p or not p["보기정보"]:
-                        p["보기정보"] = {}
-                        for i in range(1, 6):
-                            option_key = f"보기{i}"
-                            if option_key in p and p[option_key] and p[option_key].strip():
-                                p["보기정보"][option_key] = p[option_key].strip()
-                    
-                    # 보기가 최소 2개 이상 있어야 함
-                    if len(p.get("보기정보", {})) < 2:
-                        is_valid = False
-                
-                # 주관식 문제 유효성 검사
-                elif problem_type == "단답형" or problem_type == "서술형":
-                    # 정답이 반드시 있어야 함
-                    if not p.get("정답", "").strip():
-                        is_valid = False
-                
-                # 이미 사용된 ID 제외
-                if p["문제ID"] in st.session_state.used_problem_ids:
-                    is_valid = False
-                
-                if is_valid:
-                    # 문제 유형 카운트 증가
-                    problem_type_count[problem_type] = problem_type_count.get(problem_type, 0) + 1
-                    filtered_problems.append(p)
-    
-    # 유형별 통계 정보 출력
-    st.info(f"학년 '{normalized_student_grade}'에 맞는 문제 {len(filtered_problems)}개를 찾았습니다.")
-    if problem_type_count:
-        type_info = ", ".join([f"{t}: {c}개" for t, c in problem_type_count.items()])
-        st.info(f"문제 유형 분포: {type_info}")
-    
-    # 만약 충분한 문제가 없다면 더미 문제로 보충
-    if len(filtered_problems) < problem_count:
-        dummy_count = problem_count - len(filtered_problems)
-        st.warning(f"유효한 문제가 부족하여 {dummy_count}개의 더미 문제를 추가합니다.")
-        dummy_problems = generate_dummy_problems(student_grade, dummy_count)
-        filtered_problems.extend(dummy_problems)
-    
-    # 문제 유형별로 분류
-    problems_by_type = {}
-    for p in filtered_problems:
-        problem_type = p.get("문제유형", "기타")
-        if problem_type not in problems_by_type:
-            problems_by_type[problem_type] = []
-        problems_by_type[problem_type].append(p)
-    
-    # 각 유형별로 균등하게 문제 선택 (유형별 비율 계산)
-    selected_problems = []
-    remaining_count = problem_count
-    
-    # 모든 유형에서 최소 1문제씩 선택
-    for problem_type, type_problems in problems_by_type.items():
-        if remaining_count <= 0:
-            break
-            
-        # 각 유형에서 1문제 선택
-        selected = random.choice(type_problems)
-        selected_problems.append(selected)
-        st.session_state.used_problem_ids.add(selected["문제ID"])
-        
-        # 선택된 문제는 제외
-        type_problems.remove(selected)
-        remaining_count -= 1
-    
-    # 남은 문제 수를 유형별 비율에 따라 배분
-    if remaining_count > 0 and problems_by_type:
-        # 각 유형별 남은 문제 수 계산
-        total_remaining = sum(len(probs) for probs in problems_by_type.values())
-        
-        if total_remaining > 0:
-            # 유형별 비율 계산 및 문제 선택
-            for problem_type, type_problems in problems_by_type.items():
-                if not type_problems or remaining_count <= 0:
-                    continue
-                
-                # 이 유형에서 선택할 문제 수 (최소 1개, 비율 기반 계산)
-                type_ratio = len(type_problems) / total_remaining
-                type_count = min(remaining_count, max(1, round(remaining_count * type_ratio)))
-                
-                # 실제 선택 가능한 문제 수로 제한
-                type_count = min(type_count, len(type_problems))
-                
-                # 해당 유형에서 무작위로 선택
-                for _ in range(type_count):
-                    if type_problems and remaining_count > 0:
-                        selected = random.choice(type_problems)
-                        selected_problems.append(selected)
-                        st.session_state.used_problem_ids.add(selected["문제ID"])
-                        type_problems.remove(selected)
-                        remaining_count -= 1
-    
-    # 여전히 부족하다면 남은 문제들 중에서 무작위로 선택
-    remaining_problems = [p for p in filtered_problems if p["문제ID"] not in st.session_state.used_problem_ids]
-    
-    while remaining_count > 0 and remaining_problems and attempts < max_attempts:
-        selected = random.choice(remaining_problems)
-        selected_problems.append(selected)
-        st.session_state.used_problem_ids.add(selected["문제ID"])
-        remaining_problems.remove(selected)
-        remaining_count -= 1
-        attempts += 1
-    
-    # 여전히 부족하다면 더미 문제로 추가
-    if remaining_count > 0:
-        dummy_problems = generate_dummy_problems(student_grade, remaining_count)
-        selected_problems.extend(dummy_problems)
-        
-        # 더미 문제 ID 추적
-        for p in dummy_problems:
-            if "문제ID" in p:
-                st.session_state.used_problem_ids.add(p["문제ID"])
-    
-    # 선택된 문제 목록을 무작위로 섞기
-    random.shuffle(selected_problems)
-    
-    # 문제 유형 분포 확인 - 로그용
-    final_type_count = {}
-    for p in selected_problems:
-        problem_type = p.get("문제유형", "기타")
-        final_type_count[problem_type] = final_type_count.get(problem_type, 0) + 1
-    
-    type_distribution = ", ".join([f"{t}: {c}개" for t, c in final_type_count.items()])
-    st.info(f"최종 선택된 문제 유형 분포: {type_distribution}")
-    
-    return selected_problems[:problem_count]
-
 def normalize_grade(grade_str):
     """
     학년 문자열을 표준 형식(중1, 중2, 중3, 고1, 고2, 고3)으로 정규화합니다.
@@ -573,12 +378,235 @@ def normalize_grade(grade_str):
 
 def generate_dummy_problems(student_grade, count=20):
     """학생 학년에 맞는 더미 문제를 여러 개 생성합니다."""
+    from sheets_utils import get_dummy_problem
     problems = []
     for i in range(count):
         dummy_problem = get_dummy_problem(student_grade)
         dummy_problem["문제ID"] = f"dummy-{uuid.uuid4()}"  # 고유 ID 생성
         problems.append(dummy_problem)
     return problems
+
+def load_exam_problems(student_id, student_grade, problem_count=20):
+    """학생 학년에 맞는 시험 문제를 불러옵니다"""
+    if 'used_problem_ids' not in st.session_state:
+        st.session_state.used_problem_ids = set()
+    
+    attempts = 0
+    max_attempts = 50  # 무한 루프 방지
+    
+    # 학년 정규화
+    normalized_student_grade = normalize_grade(student_grade)
+    
+    try:
+        # 구글 시트에 연결
+        connection = connect_to_sheets()
+        if not connection:
+            st.error("구글 시트에 연결할 수 없습니다.")
+            return generate_dummy_problems(student_grade, problem_count)
+        
+        # 문제 가져오기
+        all_problems = get_worksheet_records(connection, "problems")
+        if not all_problems:
+            st.warning("문제를 불러올 수 없습니다. 더미 문제를 사용합니다.")
+            return generate_dummy_problems(student_grade, problem_count)
+        
+        # 학년에 맞는 문제 필터링
+        filtered_problems = []
+        problem_type_count = {}
+        
+        for p in all_problems:
+            # 기본 유효성 검사
+            is_valid = True
+            
+            # 필수 필드 확인
+            required_fields = ["문제ID", "문제내용", "정답", "문제유형", "학년"]
+            for field in required_fields:
+                if field not in p or not p[field]:
+                    is_valid = False
+                    break
+            
+            # 학년 확인 (정규화된 학년으로 비교)
+            problem_grade = normalize_grade(p.get("학년", ""))
+            if problem_grade != normalized_student_grade:
+                is_valid = False
+            
+            # 문제 유형별 추가 유효성 검사
+            problem_type = p.get("문제유형", "")
+            
+            # 객관식 문제 유효성 검사
+            if problem_type == "객관식" and is_valid:
+                # 보기 정보 처리
+                if "보기정보" not in p:
+                    p["보기정보"] = {}
+                
+                # 보기 옵션(1번, 2번 등) 정보 추출 및 구조화
+                for key in list(p.keys()):
+                    if key.startswith("보기") and key != "보기정보":
+                        option_key = key.replace("보기", "")
+                        if option_key and p[key]:
+                            p["보기정보"][option_key] = p[key].strip()
+                
+                # 보기가 최소 2개 이상 있어야 함
+                if len(p.get("보기정보", {})) < 2:
+                    is_valid = False
+            
+            # 주관식 문제 유효성 검사
+            elif problem_type == "단답형" or problem_type == "서술형":
+                # 정답이 반드시 있어야 함
+                if not p.get("정답", "").strip():
+                    is_valid = False
+            
+            # 이미 사용된 ID 제외
+            if p["문제ID"] in st.session_state.used_problem_ids:
+                is_valid = False
+            
+            if is_valid:
+                # 문제 유형 카운트 증가
+                problem_type_count[problem_type] = problem_type_count.get(problem_type, 0) + 1
+                filtered_problems.append(p)
+        
+        # 유형별 통계 정보 출력
+        st.info(f"학년 '{normalized_student_grade}'에 맞는 문제 {len(filtered_problems)}개를 찾았습니다.")
+        if problem_type_count:
+            type_info = ", ".join([f"{t}: {c}개" for t, c in problem_type_count.items()])
+            st.info(f"문제 유형 분포: {type_info}")
+        
+        # 만약 충분한 문제가 없다면 더미 문제로 보충
+        if len(filtered_problems) < problem_count:
+            dummy_count = problem_count - len(filtered_problems)
+            st.warning(f"유효한 문제가 부족하여 {dummy_count}개의 더미 문제를 추가합니다.")
+            dummy_problems = generate_dummy_problems(student_grade, dummy_count)
+            filtered_problems.extend(dummy_problems)
+        
+        # 문제 유형별로 분류
+        problems_by_type = {}
+        for p in filtered_problems:
+            problem_type = p.get("문제유형", "기타")
+            if problem_type not in problems_by_type:
+                problems_by_type[problem_type] = []
+            problems_by_type[problem_type].append(p)
+        
+        # 각 유형별로 균등하게 문제 선택 (유형별 비율 계산)
+        selected_problems = []
+        remaining_count = problem_count
+        
+        # 모든 유형에서 최소 1문제씩 선택
+        for problem_type, type_problems in problems_by_type.items():
+            if remaining_count <= 0:
+                break
+                
+            # 각 유형에서 1문제 선택
+            selected = random.choice(type_problems)
+            selected_problems.append(selected)
+            st.session_state.used_problem_ids.add(selected["문제ID"])
+            
+            # 선택된 문제는 제외
+            type_problems.remove(selected)
+            remaining_count -= 1
+        
+        # 남은 문제 수를 유형별 비율에 따라 배분
+        if remaining_count > 0 and problems_by_type:
+            # 각 유형별 남은 문제 수 계산
+            total_remaining = sum(len(probs) for probs in problems_by_type.values())
+            
+            if total_remaining > 0:
+                # 유형별 비율 계산 및 문제 선택
+                for problem_type, type_problems in problems_by_type.items():
+                    if not type_problems or remaining_count <= 0:
+                        continue
+                    
+                    # 이 유형에서 선택할 문제 수 (최소 1개, 비율 기반 계산)
+                    type_ratio = len(type_problems) / total_remaining
+                    type_count = min(remaining_count, max(1, round(remaining_count * type_ratio)))
+                    
+                    # 실제 선택 가능한 문제 수로 제한
+                    type_count = min(type_count, len(type_problems))
+                    
+                    # 해당 유형에서 무작위로 선택
+                    for _ in range(type_count):
+                        if type_problems and remaining_count > 0:
+                            selected = random.choice(type_problems)
+                            selected_problems.append(selected)
+                            st.session_state.used_problem_ids.add(selected["문제ID"])
+                            type_problems.remove(selected)
+                            remaining_count -= 1
+        
+        # 여전히 부족하다면 남은 문제들 중에서 무작위로 선택
+        remaining_problems = [p for p in filtered_problems if p["문제ID"] not in st.session_state.used_problem_ids]
+        
+        while remaining_count > 0 and remaining_problems and attempts < max_attempts:
+            selected = random.choice(remaining_problems)
+            selected_problems.append(selected)
+            st.session_state.used_problem_ids.add(selected["문제ID"])
+            remaining_problems.remove(selected)
+            remaining_count -= 1
+            attempts += 1
+        
+        # 여전히 부족하다면 더미 문제로 추가
+        if remaining_count > 0:
+            dummy_problems = generate_dummy_problems(student_grade, remaining_count)
+            selected_problems.extend(dummy_problems)
+            
+            # 더미 문제 ID 추적
+            for p in dummy_problems:
+                if "문제ID" in p:
+                    st.session_state.used_problem_ids.add(p["문제ID"])
+        
+        # 선택된 문제 목록을 무작위로 섞기
+        random.shuffle(selected_problems)
+        
+        # 문제 유형 분포 확인 - 로그용
+        final_type_count = {}
+        for p in selected_problems:
+            problem_type = p.get("문제유형", "기타")
+            final_type_count[problem_type] = final_type_count.get(problem_type, 0) + 1
+        
+        type_distribution = ", ".join([f"{t}: {c}개" for t, c in final_type_count.items()])
+        st.info(f"최종 선택된 문제 유형 분포: {type_distribution}")
+        
+        return selected_problems[:problem_count]
+    
+    except Exception as e:
+        st.error(f"문제 로드 중 오류 발생: {str(e)}")
+        # 오류 발생 시 더미 문제 반환
+        return generate_dummy_problems(student_grade, problem_count)
+
+def check_student_login():
+    """학생 로그인 상태를 확인합니다."""
+    return hasattr(st.session_state, 'student_id') and st.session_state.student_id is not None
+
+def my_performance_page():
+    """학생 성적 및 진척도 페이지"""
+    # 새 페이지 전환을 위한 세션 상태 확인
+    if "perf_page_active" not in st.session_state:
+        st.session_state.perf_page_active = True
+    
+    if not check_student_login():
+        st.error("로그인 정보가 없습니다.")
+        if st.button("로그인 페이지로 돌아가기"):
+            st.session_state.page = "intro"
+            st.rerun()
+        return
+    
+    st.title("내 성적 분석")
+    st.markdown(f"**학생**: {st.session_state.student_name} | **학년**: {st.session_state.student_grade} | **실력등급**: {st.session_state.student_level}")
+    
+    # 학생 진척도 대시보드 표시
+    try:
+        show_student_performance_dashboard(
+            st.session_state.student_id,
+            st.session_state.student_name,
+            st.session_state.student_grade,
+            st.session_state.student_level
+        )
+    except Exception as e:
+        st.error(f"성적 데이터를 불러오는데 실패했습니다: {str(e)}")
+        st.info("아직 시험 결과가 없거나 데이터를 불러오는데 문제가 있습니다.")
+    
+    # 대시보드로 돌아가기 버튼
+    if st.button("← 대시보드로 돌아가기", use_container_width=True):
+        st.session_state.page = "student_dashboard"
+        st.rerun()
 
 def exam_page():
     """시험 페이지 - 모든 문제를 한 페이지에 표시합니다."""
@@ -706,29 +734,24 @@ def exam_page():
         # 제출 버튼
         submit_button = st.form_submit_button("시험지 제출하기", use_container_width=True)
         
-        if submit_button:
-            # 제출 처리 - 버튼이 눌렸다는 상태 미리 저장
-            st.session_state.form_submitted = True
-
     # 폼 제출 후 처리 - 폼 바깥에서 처리하여 재렌더링 문제 해결
-    if st.session_state.get('form_submitted', False) and not st.session_state.get('exam_submitted', False):
+    if submit_button:
         with st.spinner("답안 제출 중..."):
             # 결과 처리 - 별도 함수로 추출
             success = process_exam_results()
             if success:
                 st.session_state.exam_submitted = True
-                st.session_state.form_submitted = False
                 st.session_state.page = "exam_score"
                 st.rerun()
             else:
                 st.error("결과 처리 중 오류가 발생했습니다. 다시 시도해주세요.")
-                st.session_state.form_submitted = False
     
     # 대시보드로 돌아가기
     if st.button("← 대시보드로 돌아가기", use_container_width=True):
         if st.session_state.student_answers:
             # 작성 중인 답안이 있는 경우 확인
-            if st.button("정말 나가시겠습니까? 저장되지 않은 답안은 사라집니다.", key="confirm_exit"):
+            confirm = st.button("정말 나가시겠습니까? 저장되지 않은 답안은 사라집니다.", key="confirm_exit")
+            if confirm:
                 st.session_state.page = "student_dashboard"
                 st.rerun()
         else:
@@ -736,630 +759,400 @@ def exam_page():
             st.rerun()
 
 def process_exam_results():
-    """시험 결과를 처리하고 세션에 저장합니다."""
-    # 이미 처리된 경우 건너뛰기
-    if 'exam_results' in st.session_state:
-        return True
-    
-    if not st.session_state.student_answers:
-        st.warning("제출된 답안이 없습니다.")
-        return False
-        
+    """시험 결과를 처리하고 세션 상태에 저장합니다."""
     try:
-        results = {}
-        total_score = 0
-        correct_count = 0
+        # 학생 답안 확인
+        student_answers = st.session_state.student_answers
+        if not student_answers:
+            st.warning("제출된 답안이 없습니다. 적어도 하나 이상의 문제를 풀어주세요.")
+            return False
         
-        # 모든 답안 채점
-        for problem_id, problem_data in st.session_state.student_answers.items():
-            if "제출답안" not in problem_data or not problem_data["제출답안"]:
-                # 답안이 없는 경우 오답 처리
-                results[problem_id] = {
-                    'score': 0,
-                    'is_correct': False,
-                    'student_answer': "",
-                    'correct_answer': problem_data.get('정답', '')
-                }
-                continue
-                
-            student_answer = problem_data['제출답안']
+        # 시험 결과 계산
+        correct_count = 0
+        total_problems = len(st.session_state.exam_problems)
+        problem_details = {}
+        
+        # 각 문제별 정답 확인
+        for problem in st.session_state.exam_problems:
+            problem_id = problem["문제ID"]
             
-            # 정답 필드가 없는 경우 처리
-            if '정답' not in problem_data:
-                st.warning(f"문제 ID: {problem_id}에 정답 필드가 없습니다.")
-                results[problem_id] = {
-                    'score': 0,
-                    'is_correct': False,
-                    'student_answer': student_answer,
-                    'correct_answer': "정답 정보 없음"
-                }
-                continue
-                
-            correct_answer = problem_data['정답']
+            # 답안 정보
+            student_answer_data = student_answers.get(problem_id, {})
+            student_answer = student_answer_data.get("제출답안", "")
+            correct_answer = problem.get("정답", "")
             
-            # 단답형 또는 객관식 여부 확인
-            is_objective = str(correct_answer).startswith("보기")
-            
-            if is_objective:
-                # 객관식 문제는 정확히 일치해야 함
+            # 정답 여부 확인
+            if not student_answer:
+                is_correct = False  # 답안 미제출은 오답 처리
+            elif problem.get("문제유형") == "객관식":
+                # 객관식: 정확히 일치해야 함
                 is_correct = (student_answer == correct_answer)
             else:
-                # 단답형 문제는 대소문자, 공백 무시
-                normalized_student = student_answer.lower().strip() if student_answer else ""
-                normalized_correct = correct_answer.lower().strip() if correct_answer else ""
+                # 단답형/서술형: 대소문자 및 공백 무시하고 비교
+                normalized_student = student_answer.lower().strip()
+                normalized_correct = correct_answer.lower().strip()
                 is_correct = (normalized_student == normalized_correct)
             
-            score = 100 if is_correct else 0
-            
+            # 정답 카운트 증가
             if is_correct:
                 correct_count += 1
             
-            results[problem_id] = {
-                'score': score,
-                'is_correct': is_correct,
-                'student_answer': student_answer,
-                'correct_answer': correct_answer
+            # 문제별 상세 정보
+            problem_details[problem_id] = {
+                "student_answer": student_answer,
+                "correct_answer": correct_answer,
+                "is_correct": is_correct
             }
-            
-            # 학생 취약점 업데이트 시도
-            try:
-                keywords = problem_data.get('키워드', '')
-                update_problem_stats(
-                    st.session_state.student_id,
-                    problem_id,
-                    keywords,
-                    is_correct
-                )
-            except Exception as e:
-                # 취약점 업데이트 실패해도 계속 진행
-                print(f"취약점 업데이트 실패: {str(e)}")
         
-        # 총점 계산 (백분율)
-        total_problems = len(st.session_state.student_answers)
+        # 총점 계산 (100점 만점)
         if total_problems > 0:
             total_score = (correct_count / total_problems) * 100
+        else:
+            total_score = 0
         
         # 결과 저장
         st.session_state.exam_results = {
-            'details': results,
-            'total_score': total_score,
-            'correct_count': correct_count,
-            'total_problems': total_problems
+            "total_score": total_score,
+            "correct_count": correct_count,
+            "total_problems": total_problems,
+            "details": problem_details,
+            "exam_date": time.strftime("%Y-%m-%d %H:%M:%S")
         }
         
-        # Google Sheets에 결과 저장 시도
+        # 결과 서버에 저장 (옵션)
         try:
-            from sheets_utils import save_student_result
-            save_student_result(
-                st.session_state.student_id,
-                st.session_state.student_name,
-                st.session_state.student_grade,
-                st.session_state.exam_results
-            )
+            # 스프레드시트에 저장 시도
+            save_exam_result_to_sheets()
         except Exception as e:
-            print(f"Google Sheets에 결과 저장 실패: {str(e)}")
+            st.warning(f"결과 저장 중 오류 발생: {str(e)}")
+            # 결과 저장 실패는 프로세스 진행에 영향 없음
         
         return True
+    
     except Exception as e:
-        print(f"시험 결과 처리 오류: {str(e)}")
-        st.error(f"결과 처리 중 오류: {str(e)}")
-        traceback_str = traceback.format_exc()
-        print(f"상세 오류: {traceback_str}")
-        
-        # 오류 발생 시 기본값 설정
-        st.session_state.exam_results = {
-            'details': {},
-            'total_score': 0,
-            'correct_count': 0,
-            'total_problems': len(st.session_state.student_answers) 
-        }
+        st.error(f"시험 결과 처리 중 오류 발생: {str(e)}")
         return False
 
-def exam_score_page():
-    """시험 점수 결과 페이지"""
-    # 화면 초기화 방지를 위한 세션 상태 확인
-    if "submit_complete" not in st.session_state:
-        st.session_state.submit_complete = True
-        
-    if not hasattr(st.session_state, 'student_id') or st.session_state.student_id is None:
-        st.error("로그인 정보가 없습니다.")
-        if st.button("로그인 페이지로 돌아가기"):
-            st.session_state.page = "intro"
-            st.rerun()
-        return
+def save_exam_result_to_sheets():
+    """시험 결과를 구글 시트에 저장합니다."""
+    # 스프레드시트 연결
+    sheet = connect_to_sheets()
+    if not sheet:
+        raise Exception("구글 시트에 연결할 수 없습니다.")
     
-    if 'exam_submitted' not in st.session_state or not st.session_state.exam_submitted:
-        st.warning("시험을 먼저 제출해야 합니다.")
-        if st.button("시험 페이지로 돌아가기"):
-            st.session_state.page = "exam_page"
-            st.rerun()
-        return
-    
-    if 'exam_results' not in st.session_state:
-        # 결과가 없는 경우 다시 생성 시도
-        with st.spinner("시험 결과를 처리 중입니다..."):
-            success = process_exam_results()
-            
-        # 여전히 결과가 없는 경우
-        if not success or 'exam_results' not in st.session_state:
-            st.error("시험 결과를 처리할 수 없습니다. 대시보드로 돌아가세요.")
-            if st.button("대시보드로 돌아가기"):
-                st.session_state.page = "student_dashboard"
-                st.rerun()
-            return
-    
-    st.title("시험 결과")
-    
-    # 학생 정보
-    st.markdown(f"**학생**: {st.session_state.get('student_name', '학생')} | **학년**: {st.session_state.get('student_grade', 'N/A')} | **실력등급**: {st.session_state.get('student_level', 'N/A')}")
-    
-    results = st.session_state.exam_results
-    
-    # 총점 표시
-    score = results['total_score']
-    st.markdown(f"### 총점: {score:.1f}점")
-    
-    # 점수에 따른 메시지
-    if score >= 90:
-        st.success("축하합니다! 아주 우수한 성적입니다. 👏👏👏")
-    elif score >= 80:
-        st.success("잘했습니다! 좋은 성적입니다. 👏👏")
-    elif score >= 70:
-        st.info("괜찮은 성적입니다. 조금만 더 노력해보세요! 👍")
-    elif score >= 60:
-        st.warning("더 노력이 필요합니다. 틀린 문제를 복습해보세요.")
-    else:
-        st.error("많은 노력이 필요합니다. 기초부터 다시 공부해보세요.")
-    
-    # 결과 요약
-    st.markdown(f"### 정답률: {results['correct_count']}/{results['total_problems']} 문제")
-    
-    # 피드백 데이터 생성
-    if 'feedback_data' not in st.session_state:
-        with st.spinner("문제 해설 및 피드백 생성 중..."):
-            feedback_data = {}
-            
-            for problem_id, result in results['details'].items():
-                problem_data = st.session_state.student_answers.get(problem_id, {})
-                if not problem_data:
-                    continue
-                
-                # 기본 피드백 정보 구성
-                feedback = {
-                    "학생답안": result['student_answer'],
-                    "정답": result['correct_answer'],
-                    "해설": problem_data.get('해설', ""),
-                    "첨삭": ""
-                }
-                
-                # Gemini 첨삭 생성 시도 (옵션)
-                try:
-                    if "GOOGLE_API_KEY" in st.secrets:
-                        score, feedback_text = generate_feedback(
-                            problem_data.get('문제', ''),
-                            result['student_answer'],
-                            result['correct_answer'],
-                            problem_data.get('해설', '')
-                        )
-                        feedback["첨삭"] = feedback_text
-                except Exception as e:
-                    # Gemini 피드백 생성 실패 시 기본 피드백 사용
-                    st.warning(f"첨삭 생성 중 오류 발생: {str(e)}")
-                    if result['is_correct']:
-                        feedback["첨삭"] = "정답입니다! 해설을 통해 개념을 확실히 이해해 보세요."
-                    else:
-                        feedback["첨삭"] = "오답입니다. 해설을 잘 읽고 왜 틀렸는지 파악해 보세요."
-                
-                feedback_data[problem_id] = feedback
-            
-            st.session_state.feedback_data = feedback_data
-    
-    # 각 문제별 결과 - 모든 문제를 펼쳐서 표시
-    st.subheader("상세 결과")
-    
-    # 탭으로 정답/오답 구분
-    tab1, tab2, tab3 = st.tabs(["모든 문제", "정답 문제", "오답 문제"])
-    
-    with tab1:
-        # 모든 문제 결과
-        for idx, (problem_id, result) in enumerate(results['details'].items(), 1):
-            problem_data = st.session_state.student_answers.get(problem_id, {})
-            feedback_data = st.session_state.feedback_data.get(problem_id, {})
-            
-            # 아이콘으로 정답/오답 표시
-            if result['is_correct']:
-                icon = "✅"
-            else:
-                icon = "❌"
-            
-            with st.container(border=True):
-                st.markdown(f"### {icon} 문제 {idx}: {problem_data.get('과목', '과목 없음')} ({problem_data.get('문제유형', '유형 없음')})")
-                st.markdown(problem_data.get('문제', '문제 없음'))
-                
-                if '보기정보' in problem_data and any(problem_data['보기정보'].values()):
-                    # 보기 정보를 표로 표시
-                    option_data = []
-                    for option_key, option_text in problem_data['보기정보'].items():
-                        if option_text:
-                            if option_key == result['student_answer'] and option_key == result['correct_answer']:
-                                # 정답이고 학생도 맞춤
-                                row = [f"{option_key} 🟢", option_text]
-                            elif option_key == result['student_answer']:
-                                # 학생이 선택했지만 오답
-                                row = [f"{option_key} 🔴", option_text]
-                            elif option_key == result['correct_answer']:
-                                # 정답이지만 학생이 선택하지 않음
-                                row = [f"{option_key} ⭕", option_text]
-                            else:
-                                # 일반 보기
-                                row = [option_key, option_text]
-                            option_data.append(row)
-                    
-                    if option_data:
-                        st.table(option_data)
-                
-                # 정답 비교 영역 (2개 열로 표시)
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown("#### 제출한 답안")
-                    if result['is_correct']:
-                        st.success(f"**{result['student_answer']}**")
-                    else:
-                        st.error(f"**{result['student_answer']}**")
-                with col2:
-                    st.markdown("#### 정답")
-                    st.success(f"**{result['correct_answer']}**")
-                
-                # 해설 및 첨삭 피드백
-                st.markdown("#### 해설")
-                st.markdown(feedback_data.get('해설', '해설 정보가 없습니다.'))
-                
-                if feedback_data.get('첨삭'):
-                    st.markdown("#### 첨삭 피드백")
-                    st.markdown(feedback_data.get('첨삭', ''))
-    
-    with tab2:
-        # 정답 문제만 표시
-        correct_problems = [(problem_id, result) for problem_id, result in results['details'].items() if result['is_correct']]
-        
-        if not correct_problems:
-            st.info("정답인 문제가 없습니다.")
-        
-        for idx, (problem_id, result) in enumerate(correct_problems, 1):
-            problem_data = st.session_state.student_answers.get(problem_id, {})
-            feedback_data = st.session_state.feedback_data.get(problem_id, {})
-            
-            with st.container(border=True):
-                st.markdown(f"### ✅ 문제 {idx}: {problem_data.get('과목', '과목 없음')} ({problem_data.get('문제유형', '유형 없음')})")
-                st.markdown(problem_data.get('문제', '문제 없음'))
-                
-                # 정답 확인
-                st.success(f"**정답**: {result['correct_answer']}")
-                
-                # 해설 및 첨삭 피드백
-                st.markdown("#### 해설")
-                st.markdown(feedback_data.get('해설', '해설 정보가 없습니다.'))
-                
-                if feedback_data.get('첨삭'):
-                    st.markdown("#### 첨삭 피드백")
-                    st.markdown(feedback_data.get('첨삭', ''))
-    
-    with tab3:
-        # 오답 문제만 표시
-        wrong_problems = [(problem_id, result) for problem_id, result in results['details'].items() if not result['is_correct']]
-        
-        if not wrong_problems:
-            st.info("틀린 문제가 없습니다. 모든 문제를 맞혔습니다!")
-        
-        for idx, (problem_id, result) in enumerate(wrong_problems, 1):
-            problem_data = st.session_state.student_answers.get(problem_id, {})
-            feedback_data = st.session_state.feedback_data.get(problem_id, {})
-            
-            with st.container(border=True):
-                st.markdown(f"### ❌ 문제 {idx}: {problem_data.get('과목', '과목 없음')} ({problem_data.get('문제유형', '유형 없음')})")
-                st.markdown(problem_data.get('문제', '문제 없음'))
-                
-                # 정답 비교 영역
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown("#### 제출한 답안")
-                    st.error(f"**{result['student_answer']}**")
-                with col2:
-                    st.markdown("#### 정답")
-                    st.success(f"**{result['correct_answer']}**")
-                
-                # 해설 및 첨삭 피드백
-                st.markdown("#### 해설")
-                st.markdown(feedback_data.get('해설', '해설 정보가 없습니다.'))
-                
-                if feedback_data.get('첨삭'):
-                    st.markdown("#### 첨삭 피드백")
-                    st.markdown(feedback_data.get('첨삭', ''))
-    
-    # 성적 분석 버튼
-    if st.button("나의 성적 분석 보기", use_container_width=True):
-        st.session_state.page = "my_performance"
-        st.rerun()
-    
-    # 대시보드로 돌아가기 버튼
-    if st.button("대시보드로 돌아가기", use_container_width=True):
-        st.session_state.page = "student_dashboard"
-        st.rerun()
-
-def check_api_connections():
-    """Google Sheets와 Gemini API 연결 상태를 확인합니다."""
-    connections = {
-        "google_sheets": False,
-        "gemini": False,
-        "error_messages": []
-    }
-    
-    # Google Sheets 연결 확인
     try:
-        sheet = connect_to_sheets()
-        if sheet:
-            try:
-                # 실제로 데이터 읽기 시도
-                worksheet = sheet.worksheet("problems")
-                # 새로운 래퍼 함수 사용
-                records = get_worksheet_records(worksheet, limit=1)  # 첫 번째 행만 읽기
-                connections["google_sheets"] = True
-            except Exception as e:
-                connections["error_messages"].append(f"Google Sheets 접근 오류: {str(e)}")
-        else:
-            connections["error_messages"].append("Google Sheets 연결에 실패했습니다.")
-    except Exception as e:
-        connections["error_messages"].append(f"Google Sheets 연결 오류: {str(e)}")
-    
-    # Gemini API 연결 확인
-    try:
-        if "GOOGLE_API_KEY" in st.secrets:
-            import google.generativeai as genai
+        # 학생 답안 워크시트
+        answers_ws = sheet.worksheet("student_answers")
+        
+        # 각 문제별로 학생 답안 저장
+        for problem_id, problem_data in st.session_state.student_answers.items():
+            # 시험 정보
+            result_data = st.session_state.exam_results["details"].get(problem_id, {})
             
-            try:
-                # Gemini API 초기화
-                genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-                
-                # 안전 설정 및 생성 설정
-                safety_settings = [
-                    {
-                        "category": "HARM_CATEGORY_HARASSMENT",
-                        "threshold": "BLOCK_NONE",
-                    },
-                    {
-                        "category": "HARM_CATEGORY_HATE_SPEECH",
-                        "threshold": "BLOCK_NONE",
-                    },
-                    {
-                        "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                        "threshold": "BLOCK_NONE",
-                    },
-                    {
-                        "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                        "threshold": "BLOCK_NONE",
-                    },
-                ]
-                
-                generation_config = {
-                    "temperature": 0.7,
-                    "top_p": 0.95,
-                    "top_k": 40,
-                    "max_output_tokens": 100,
-                }
-                
-                # 간단한 API 호출 테스트 - gemini-1.5-flash 모델 사용
-                model = genai.GenerativeModel(
-                    model_name="gemini-1.5-flash",
-                    generation_config=generation_config,
-                    safety_settings=safety_settings
-                )
-                response = model.generate_content("Hello!")
-                
-                # 응답이 있으면 연결 성공
-                if response and hasattr(response, 'text'):
-                    connections["gemini"] = True
-                else:
-                    connections["error_messages"].append("Gemini API 응답이 예상과 다릅니다.")
-            except Exception as e:
-                connections["error_messages"].append(f"Gemini API 오류: {str(e)}")
-        else:
-            connections["error_messages"].append("Gemini API 키가 설정되지 않았습니다.")
-    except Exception as e:
-        connections["error_messages"].append(f"Gemini API 연결 오류: {str(e)}")
-    
-    return connections
-
-def problem_page():
-    """개별 문제 풀이 페이지"""
-    if not hasattr(st.session_state, 'student_id') or st.session_state.student_id is None:
-        st.error("로그인 정보가 없습니다.")
-        if st.button("로그인 페이지로 돌아가기"):
-            st.session_state.page = "intro"
-            st.rerun()
-        return
-    
-    # 문제 로드 (현재 문제가 없는 경우)
-    if 'current_problem' not in st.session_state or st.session_state.current_problem is None:
+            # 데이터 준비
+            row_data = {
+                "학생ID": st.session_state.student_id,
+                "학생이름": st.session_state.student_name,
+                "학년": st.session_state.student_grade,
+                "문제ID": problem_id,
+                "과목": problem_data.get("과목", ""),
+                "문제유형": problem_data.get("문제유형", ""),
+                "난이도": problem_data.get("난이도", ""),
+                "제출답안": result_data.get("student_answer", ""),
+                "정답여부": "O" if result_data.get("is_correct", False) else "X",
+                "제출일시": time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            # 행 추가
+            answers_ws.append_row(list(row_data.values()))
+        
+        # 성적 분석 데이터 업데이트 (옵션)
         try:
-            # 이전에 풀었던 문제 ID 기록
-            previous_problems = st.session_state.get('previous_problems', set())
-            
-            # 학생 맞춤형 문제 추천
-            sheet = connect_to_sheets()
-            if sheet:
-                try:
-                    worksheet = sheet.worksheet("problems")
-                    all_problems = worksheet.get_all_records()
-                    if all_problems:
-                        # 학생 수준에 맞는 문제 필터링
-                        student_grade = st.session_state.student_grade
-                        available_problems = [p for p in all_problems if p["학년"] == student_grade]
-                        
-                        if available_problems:
-                            # 이전에 안 풀었던 문제 중에서 추천
-                            available_problems = [p for p in available_problems if p["문제ID"] not in previous_problems]
-                            
-                            if not available_problems:
-                                # 모든 문제를 다 풀었다면 다시 처음부터
-                                available_problems = [p for p in all_problems if p["학년"] == student_grade]
-                                previous_problems.clear()
-                            
-                            # 학생 취약점을 고려한 문제 추천
-                            problem = get_problem_for_student(
-                                st.session_state.student_id,
-                                available_problems
-                            )
-                            
-                            if problem:
-                                st.session_state.current_problem = problem
-                                st.session_state.previous_problems.add(problem["문제ID"])
-                except Exception as e:
-                    st.error(f"문제 추천 중 오류 발생: {str(e)}")
-                    # 오류 발생 시 랜덤 문제 선택
-                    problem = get_random_problem()
-                    st.session_state.current_problem = problem
+            # 키워드 추출 및 약점 분석
+            for problem_id, result in st.session_state.exam_results["details"].items():
+                problem_data = st.session_state.student_answers.get(problem_id, {})
+                
+                # 키워드 추출 (없는 경우 빈 리스트)
+                keywords = []
+                if "키워드" in problem_data and problem_data["키워드"]:
+                    if isinstance(problem_data["키워드"], str):
+                        keywords = [k.strip() for k in problem_data["키워드"].split(',') if k.strip()]
+                
+                # 약점 분석 업데이트
+                if keywords:
+                    update_problem_stats(
+                        st.session_state.student_id,
+                        problem_id,
+                        keywords,
+                        result["is_correct"]
+                    )
         except Exception as e:
-            st.error(f"문제 로드 중 오류 발생: {str(e)}")
-            # 오류 발생 시 랜덤 문제 선택
-            problem = get_random_problem()
-            st.session_state.current_problem = problem
+            # 약점 분석 실패는 저장 프로세스 진행에 영향 없음
+            st.warning(f"약점 분석 중 오류 발생: {str(e)}")
+        
+        return True
     
-    # 문제가 성공적으로 로드되었는지 확인
-    if 'current_problem' not in st.session_state or st.session_state.current_problem is None:
-        st.error("문제를 불러오는데 실패했습니다.")
-        if st.button("대시보드로 돌아가기", key="error_to_dashboard"):
+    except Exception as e:
+        raise Exception(f"시험 결과 저장 중 오류: {str(e)}")
+
+def exam_score_page():
+    """시험 결과 페이지를 표시합니다."""
+    
+    if not check_student_login() or 'exam_results' not in st.session_state:
+        st.error("시험 결과가 없습니다.")
+        if st.button("대시보드로 돌아가기"):
             st.session_state.page = "student_dashboard"
             st.rerun()
         return
     
-    problem = st.session_state.current_problem
+    # 학생 정보 표시
+    st.title("📝 시험 결과")
     
-    # 문제 표시
-    st.title("문제 풀기")
+    # 학생 정보 표시
+    st.markdown(f"**학생**: {st.session_state.student_name} | **학년**: {st.session_state.student_grade} | **실력등급**: {st.session_state.student_level}")
     
-    # 진행 상태 표시
-    col1, col2 = st.columns(2)
+    # 총점과 성적 표시
+    results = st.session_state.exam_results
+    total_score = results.get('total_score', 0)
+    correct_count = results.get('correct_count', 0)
+    total_problems = results.get('total_problems', 0)
+    
+    col1, col2, col3 = st.columns(3)
+    
     with col1:
-        if 'problem_count' in st.session_state and 'max_problems' in st.session_state:
-            st.info(f"문제 {st.session_state.problem_count}/{st.session_state.max_problems}")
+        st.metric("총점", f"{total_score:.1f}점")
     
     with col2:
-        # 남은 시간 표시 (있는 경우)
-        if 'start_time' in st.session_state and 'time_limit' in st.session_state:
-            elapsed_time = time.time() - st.session_state.start_time
-            remaining_time = max(0, st.session_state.time_limit - elapsed_time)
-            
-            # 시간 표시
-            mins, secs = divmod(int(remaining_time), 60)
-            time_str = f"{mins:02d}:{secs:02d}"
-            st.info(f"남은 시간: {time_str}")
-            
-            # 시간 제한 확인
-            if remaining_time <= 0:
-                st.warning("시간이 초과되었습니다. 결과 페이지로 이동합니다.")
-                st.session_state.page = "exam_result"
-                st.rerun()
+        st.metric("정답 개수", f"{correct_count}/{total_problems}")
     
-    # 문제 정보 표시
-    subject = problem.get("과목", "")
-    grade = problem.get("학년", "")
-    difficulty = problem.get("난이도", "")
-    
-    st.markdown(f"**과목**: {subject} | **학년**: {grade} | **난이도**: {difficulty}")
-    
-    # 문제 내용
-    st.subheader(problem.get("문제내용", "문제 내용을 불러올 수 없습니다."))
-    
-    # 보기가 있는지 확인
-    has_options = False
-    options = []
-    
-    for i in range(1, 6):
-        option_key = f"보기{i}"
-        if option_key in problem and problem[option_key]:
-            has_options = True
-            options.append((option_key, problem[option_key]))
-    
-    # 객관식 또는 주관식 문제 처리
-    with st.form(key='problem_form'):
-        if has_options:
-            # 객관식 문제
-            st.session_state.is_multiple_choice = True
-            selected_option = st.radio(
-                "정답을 선택하세요:",
-                options=options,
-                format_func=lambda x: f"{x[0]}: {x[1]}"
-            )
-            student_answer = selected_option[0] if selected_option else None
+    with col3:
+        if total_problems > 0:
+            correct_rate = (correct_count / total_problems) * 100
+            st.metric("정답률", f"{correct_rate:.1f}%")
         else:
-            # 주관식 문제
-            st.session_state.is_multiple_choice = False
-            student_answer = st.text_input("답을 입력하세요:")
-        
-        submit_button = st.form_submit_button("제출")
+            st.metric("정답률", "0%")
     
-    # 제출 처리
-    if submit_button and student_answer:
-        st.session_state.student_answer = student_answer
-        st.session_state.submitted = True
+    # 총점에 따른 메시지
+    if total_score >= 90:
+        st.success("🌟 훌륭합니다! 아주 좋은 성적입니다.")
+    elif total_score >= 70:
+        st.success("👍 잘했습니다! 조금 더 노력하면 더 좋은 결과를 얻을 수 있을 거예요.")
+    elif total_score >= 50:
+        st.warning("🔍 기본기를 다지는 것이 필요합니다. 어려웠던 부분을 중심으로 복습해보세요.")
+    else:
+        st.error("💪 더 많은 연습이 필요합니다. 포기하지 말고 꾸준히 공부해봅시다!")
+    
+    # 피드백 데이터 생성
+    feedback_data = []
+    for problem_id, detail in results.get('details', {}).items():
+        problem_data = st.session_state.student_answers.get(problem_id, {})
+        if not problem_data:
+            continue
+            
+        # 문제 정보 추출
+        question = problem_data.get('문제내용', '문제 정보 없음')
+        student_answer = detail.get('student_answer', '답안 정보 없음')
+        is_correct = detail.get('is_correct', False)
+        correct_answer = detail.get('correct_answer', '정답 정보 없음')
+        explanation = problem_data.get('해설', '')
         
-        # 정답 확인
-        correct_answer = problem.get("정답", "")
+        # 피드백 생성 또는 가져오기
+        feedback = problem_data.get('피드백', '')
         
-        # 정답 처리
-        if st.session_state.is_multiple_choice:
-            # 객관식 문제는 정확히 일치해야 함
-            is_correct = (student_answer == correct_answer)
+        if not feedback and student_answer:
+            try:
+                # API에서 피드백 생성
+                from gpt_feedback import generate_feedback
+                score, api_feedback = generate_feedback(question, student_answer, correct_answer, explanation)
+                feedback = api_feedback
+                
+                # 결과 저장
+                problem_data['피드백'] = feedback
+                st.session_state.student_answers[problem_id] = problem_data
+            except Exception as e:
+                feedback = f"피드백 생성 중 오류: {str(e)}"
+        
+        # 문제 정보와 피드백 추가
+        feedback_data.append({
+            "problem_id": problem_id,
+            "question": question,
+            "student_answer": student_answer,
+            "correct_answer": correct_answer,
+            "is_correct": is_correct,
+            "explanation": explanation,
+            "feedback": feedback,
+            "problem_data": problem_data
+        })
+    
+    # 탭으로 결과 표시
+    tab1, tab2, tab3 = st.tabs(["모든 문제", "정답 문제", "오답 문제"])
+    
+    # 보기 정보를 텍스트로 변환하는 함수
+    def get_options_text(problem_data):
+        options_text = ""
+        if "보기정보" in problem_data and problem_data["보기정보"]:
+            options = problem_data["보기정보"]
+            for key in sorted(options.keys()):
+                # 보기 글자만 추출 (예: "보기1" -> "1")
+                option_num = key.replace("보기", "")
+                options_text += f"**보기{option_num}**: {options[key]}\n\n"
+        return options_text
+    
+    # 모든 문제 탭
+    with tab1:
+        st.header("모든 문제 결과")
+        
+        for idx, item in enumerate(feedback_data, 1):
+            with st.expander(f"문제 {idx}: {'✅ 정답' if item['is_correct'] else '❌ 오답'}", expanded=False):
+                st.markdown(f"**문제**: {item['question']}")
+                
+                # 보기 정보 표시
+                options_text = get_options_text(item['problem_data'])
+                if options_text:
+                    st.markdown("### 보기:")
+                    st.markdown(options_text)
+                
+                # 정답과 선택한 답안 표시
+                student_answer_display = item['student_answer'] if item['student_answer'] else "제출한 답안 없음"
+                
+                # 객관식인지 확인
+                is_objective = item['correct_answer'].startswith('보기')
+                
+                # 표 형식으로 정보 표시
+                data = {
+                    "": ["제출한 답안", "정답"],
+                    "내용": [student_answer_display, item['correct_answer']]
+                }
+                st.table(data)
+                
+                # 선택지에 대한 설명 표시
+                if is_objective and "보기정보" in item['problem_data']:
+                    st.markdown("### 선택지 설명:")
+                    
+                    # 선택한 답안과 정답 강조
+                    for key, value in sorted(item['problem_data']["보기정보"].items()):
+                        option_num = key.replace("보기", "")
+                        
+                        # 선택한 답안과 정답 표시 형식 결정
+                        prefix = ""
+                        if key == item['student_answer']:
+                            prefix = "🔍 " if not item['is_correct'] else "✅ "
+                        elif key == item['correct_answer']:
+                            prefix = "✅ " if not item['is_correct'] else ""
+                        
+                        st.markdown(f"{prefix}**보기{option_num}**: {value}")
+                
+                # 해설과 피드백 표시
+                if item['explanation']:
+                    st.markdown("### 해설:")
+                    st.markdown(item['explanation'])
+                
+                st.markdown("### 첨삭 피드백:")
+                if item['feedback']:
+                    st.markdown(item['feedback'])
+                else:
+                    st.markdown("피드백이 생성되지 않았습니다.")
+    
+    # 정답 문제 탭
+    with tab2:
+        st.header("정답 문제")
+        correct_items = [item for item in feedback_data if item['is_correct']]
+        
+        if not correct_items:
+            st.warning("정답인 문제가 없습니다.")
         else:
-            # 주관식 문제는 대소문자 무시, 공백 제거 후 비교
-            normalized_student = student_answer.lower().strip()
-            normalized_correct = correct_answer.lower().strip()
-            is_correct = (normalized_student == normalized_correct)
+            for idx, item in enumerate(correct_items, 1):
+                with st.expander(f"문제 {idx}: ✅ 정답", expanded=False):
+                    st.markdown(f"**문제**: {item['question']}")
+                    
+                    # 보기 정보 표시
+                    options_text = get_options_text(item['problem_data'])
+                    if options_text:
+                        st.markdown("### 보기:")
+                        st.markdown(options_text)
+                    
+                    # 정답과 선택한 답안 표시
+                    student_answer_display = item['student_answer'] if item['student_answer'] else "제출한 답안 없음"
+                    
+                    # 표 형식으로 정보 표시
+                    data = {
+                        "": ["제출한 답안", "정답"],
+                        "내용": [student_answer_display, item['correct_answer']]
+                    }
+                    st.table(data)
+                    
+                    # 해설과 피드백 표시
+                    if item['explanation']:
+                        st.markdown("### 해설:")
+                        st.markdown(item['explanation'])
+                    
+                    st.markdown("### 첨삭 피드백:")
+                    if item['feedback']:
+                        st.markdown(item['feedback'])
+                    else:
+                        st.markdown("피드백이 생성되지 않았습니다.")
+    
+    # 오답 문제 탭
+    with tab3:
+        st.header("오답 문제")
+        incorrect_items = [item for item in feedback_data if not item['is_correct']]
         
-        # 점수 계산
-        score = 100 if is_correct else 0
-        
-        # GPT 피드백 생성
-        try:
-            feedback_score, feedback_text = generate_feedback(
-                problem.get("문제내용", ""),
-                student_answer,
-                correct_answer,
-                problem.get("해설", "")
-            )
-            
-            # 피드백 저장
-            st.session_state.feedback = feedback_text
-            st.session_state.score = score
-            
-            # 학생 답안 저장
-            save_student_answer(
-                st.session_state.student_id,
-                st.session_state.student_name,
-                problem["문제ID"],
-                student_answer,
-                score,
-                feedback_text
-            )
-            
-            # 학생 키워드 취약점 업데이트
-            keywords = problem.get("키워드", "")
-            update_problem_stats(
-                st.session_state.student_id,
-                problem["문제ID"],
-                keywords,
-                is_correct
-            )
-            
-            # 결과 페이지로 이동
-            st.session_state.show_result = True
-            st.session_state.page = "result"
-            st.rerun()
-        except Exception as e:
-            st.error(f"피드백 생성 중 오류가 발생했습니다: {str(e)}")
+        if not incorrect_items:
+            st.success("오답이 없습니다! 완벽합니다. 👏")
+        else:
+            for idx, item in enumerate(incorrect_items, 1):
+                with st.expander(f"문제 {idx}: ❌ 오답", expanded=False):
+                    st.markdown(f"**문제**: {item['question']}")
+                    
+                    # 보기 정보 표시
+                    options_text = get_options_text(item['problem_data'])
+                    if options_text:
+                        st.markdown("### 보기:")
+                        st.markdown(options_text)
+                    
+                    # 정답과 선택한 답안 표시
+                    student_answer_display = item['student_answer'] if item['student_answer'] else "제출한 답안 없음"
+                    
+                    # 객관식인지 확인
+                    is_objective = item['correct_answer'].startswith('보기')
+                    
+                    # 표 형식으로 정보 표시
+                    data = {
+                        "": ["제출한 답안", "정답"],
+                        "내용": [student_answer_display, item['correct_answer']]
+                    }
+                    st.table(data)
+                    
+                    # 선택지에 대한 설명 표시
+                    if is_objective and "보기정보" in item['problem_data']:
+                        st.markdown("### 선택지 설명:")
+                        
+                        # 선택한 답안과 정답 강조
+                        for key, value in sorted(item['problem_data']["보기정보"].items()):
+                            option_num = key.replace("보기", "")
+                            
+                            # 선택한 답안과 정답 표시 형식 결정
+                            prefix = ""
+                            if key == item['student_answer']:
+                                prefix = "🔍 "
+                            elif key == item['correct_answer']:
+                                prefix = "✅ "
+                            
+                            st.markdown(f"{prefix}**보기{option_num}**: {value}")
+                    
+                    # 해설과 피드백 표시
+                    if item['explanation']:
+                        st.markdown("### 해설:")
+                        st.markdown(item['explanation'])
+                    
+                    st.markdown("### 첨삭 피드백:")
+                    if item['feedback']:
+                        st.markdown(item['feedback'])
+                    else:
+                        st.markdown("피드백이 생성되지 않았습니다.")
     
     # 대시보드로 돌아가기 버튼
-    if st.button("← 대시보드", key="back_btn"):
+    if st.button("← 대시보드로 돌아가기", use_container_width=True):
         st.session_state.page = "student_dashboard"
         st.rerun()
 
