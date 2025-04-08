@@ -1145,7 +1145,20 @@ def exam_score_page():
             try:
                 # API에서 피드백 생성
                 from gpt_feedback import generate_feedback
-                score, api_feedback = generate_feedback(question, student_answer, correct_answer, explanation)
+                
+                # 문제 정보 딕셔너리 생성
+                problem_dict = {
+                    "문제내용": question,
+                    "정답": correct_answer,
+                    "해설": explanation,
+                    "문제유형": problem_data.get("문제유형", "객관식"),
+                    "과목": problem_data.get("과목", ""),
+                    "학년": problem_data.get("학년", ""),
+                    "난이도": problem_data.get("난이도", ""),
+                    "보기정보": problem_data.get("보기정보", {})
+                }
+                
+                score, api_feedback = generate_feedback(problem_dict, student_answer)
                 feedback = api_feedback
                 
                 # 결과 저장

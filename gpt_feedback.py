@@ -8,7 +8,7 @@ def generate_feedback(problem, student_answer, student_id="", student_name=""):
     학생의 답변에 대한 피드백을 생성하는 함수
     
     Args:
-        problem: 문제 정보 딕셔너리
+        problem: 문제 정보 딕셔너리 또는 문자열
         student_answer: 학생이 제출한 답변
         student_id: 학생 ID (선택)
         student_name: 학생 이름 (선택)
@@ -17,6 +17,13 @@ def generate_feedback(problem, student_answer, student_id="", student_name=""):
         tuple: (점수, 피드백 텍스트)
     """
     try:
+        # problem이 문자열인 경우 딕셔너리로 변환
+        if isinstance(problem, str):
+            problem = {
+                "문제내용": problem,
+                "문제유형": "주관식"
+            }
+        
         problem_type = problem.get("문제유형", "객관식")
         
         # 객관식 문제

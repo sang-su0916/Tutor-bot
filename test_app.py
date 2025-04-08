@@ -58,12 +58,22 @@ def test_feedback_generation():
     """채점 및 피드백 생성 테스트"""
     print("\n🔍 채점 및 피드백 생성 테스트...")
     try:
-        problem_content = "What is the correct form of the verb 'write' in the present perfect tense?"
+        # 문제 정보 딕셔너리 생성
+        problem_dict = {
+            "문제내용": "What is the correct form of the verb 'write' in the present perfect tense?",
+            "정답": "보기3",
+            "해설": "Present perfect tense는 'have/has + past participle' 형태로, 'write'의 past participle은 'written'입니다.",
+            "문제유형": "객관식",
+            "보기정보": {
+                "보기1": "writed",
+                "보기2": "wrote",
+                "보기3": "written",
+                "보기4": "writing"
+            }
+        }
         student_answer = "보기3"
-        correct_answer = "보기3"
-        explanation = "Present perfect tense는 'have/has + past participle' 형태로, 'write'의 past participle은 'written'입니다."
         
-        score, feedback = generate_feedback(problem_content, student_answer, correct_answer, explanation)
+        score, feedback = generate_feedback(problem_dict, student_answer)
         
         if score is not None and feedback:
             print("✅ 채점 및 피드백 생성 성공!")
