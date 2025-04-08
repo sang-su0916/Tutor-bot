@@ -5,6 +5,7 @@ import time
 import random
 from datetime import datetime
 import uuid
+import traceback  # 오류 추적을 위한 모듈 추가
 
 try:
     import gspread
@@ -25,100 +26,72 @@ def connect_to_sheets():
     try:
         # gspread가 설치되지 않았으면 더미 시트 반환
         if not gspread_imported:
+            st.warning("gspread 모듈이 설치되지 않아 더미 시트를 사용합니다.")
             print("gspread 모듈이 설치되지 않아 더미 시트를 사용합니다.")
             return create_dummy_sheet()
         
         # secrets.toml에서 설정 확인
         if not hasattr(st, 'secrets') or not st.secrets:
+            st.warning("secrets.toml 파일이 없습니다. 더미 시트를 사용합니다.")
             print("secrets.toml 파일이 없습니다. 더미 시트를 사용합니다.")
             return create_dummy_sheet()
         
         # 더미 데이터 사용 설정 확인
         if "use_dummy_data" in st.secrets and st.secrets["use_dummy_data"]:
+            st.info("use_dummy_data 설정이 활성화되어 있어 더미 시트를 사용합니다.")
             print("use_dummy_data 설정이 활성화되어 있어 더미 시트를 사용합니다.")
             return create_dummy_sheet()
         
         # 서비스 계정 정보 확인
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
-        if "gcp_service_account" in st.secrets and "type" in st.secrets["gcp_service_account"]:
-            # 서비스 계정 정보를 secrets.toml에서 직접 사용
-            credentials = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scope)
-            gc = gspread.authorize(credentials)
-            print("서비스 계정으로 Google Sheets에 연결되었습니다.")
-            
-            # 스프레드시트 ID 확인
-            spreadsheet_id = ""
-            if "spreadsheet_id" in st.secrets:
-                spreadsheet_id = st.secrets["spreadsheet_id"]
-            elif "gsheet_id" in st.secrets:
-                spreadsheet_id = st.secrets["gsheet_id"]
-            
-            if not spreadsheet_id:
-                print("스프레드시트 ID가 설정되지 않았습니다. 더미 시트를 사용합니다.")
-                return create_dummy_sheet()
-            
-            try:
-                # 스프레드시트 열기
-                spreadsheet = gc.open_by_key(spreadsheet_id)
-                print(f"스프레드시트 '{spreadsheet.title}'에 연결되었습니다.")
-                
-                # 필요한 워크시트 확인
-                worksheets = {ws.title: ws for ws in spreadsheet.worksheets()}
-                required_sheets = ["problems", "student_answers", "student_weaknesses", "students"]
-                
-                # 필요한 워크시트가 없으면 생성
-                for sheet_name in required_sheets:
-                    if sheet_name not in worksheets:
-                        spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=20)
-                        print(f"'{sheet_name}' 워크시트를 생성했습니다.")
-                
-                # 성공 표시
-                st.session_state.sheets_connection_status = "success"
-                st.session_state.sheets_connection_success = True
-                
-                return spreadsheet
-            except Exception as e:
-                print(f"스프레드시트 열기 오류: {str(e)}")
-                st.session_state.sheets_connection_status = "error"
-                st.session_state.sheets_connection_success = False
-                return create_dummy_sheet()
+        # 디버깅: 스프레드시트 ID 로그
+        if "spreadsheet_id" in st.secrets:
+            print(f"스프레드시트 ID: {st.secrets['spreadsheet_id']}")
         else:
-            # 서비스 계정 파일 확인
-            service_account_path = "service_account.json"
-            
-            if "GOOGLE_SERVICE_ACCOUNT_PATH" in st.secrets:
-                service_account_path = st.secrets["GOOGLE_SERVICE_ACCOUNT_PATH"]
-            
-            if os.path.exists(service_account_path):
+            print("spreadsheet_id가 secrets.toml에 설정되지 않았습니다.")
+        
+        # 서비스 계정 정보가 있는지 확인
+        if "gcp_service_account" in st.secrets and "type" in st.secrets["gcp_service_account"]:
+            print("서비스 계정 정보를 secrets.toml에서 찾았습니다.")
+            # 서비스 계정 정보를 secrets.toml에서 직접 사용
+            try:
+                credentials = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scope)
+                print("서비스 계정 정보로 credentials 객체를 생성했습니다.")
+                gc = gspread.authorize(credentials)
+                print("서비스 계정으로 Google Sheets에 연결되었습니다.")
+                st.success("서비스 계정으로 Google Sheets에 연결되었습니다.")
+                
+                # 스프레드시트 ID 확인
+                spreadsheet_id = ""
+                if "spreadsheet_id" in st.secrets:
+                    spreadsheet_id = st.secrets["spreadsheet_id"]
+                    print(f"secrets.toml에서 spreadsheet_id를 찾았습니다: {spreadsheet_id}")
+                elif "gsheet_id" in st.secrets:
+                    spreadsheet_id = st.secrets["gsheet_id"]
+                    print(f"secrets.toml에서 gsheet_id를 찾았습니다: {spreadsheet_id}")
+                
+                if not spreadsheet_id:
+                    st.warning("스프레드시트 ID가 설정되지 않았습니다. 더미 시트를 사용합니다.")
+                    print("스프레드시트 ID가 설정되지 않았습니다. 더미 시트를 사용합니다.")
+                    return create_dummy_sheet()
+                
                 try:
-                    credentials = Credentials.from_service_account_file(
-                        service_account_path, scopes=scope
-                    )
-                    gc = gspread.authorize(credentials)
-                    print("서비스 계정 파일로 Google Sheets에 연결되었습니다.")
-                    
-                    # 스프레드시트 ID 확인
-                    spreadsheet_id = ""
-                    if "spreadsheet_id" in st.secrets:
-                        spreadsheet_id = st.secrets["spreadsheet_id"]
-                    elif "gsheet_id" in st.secrets:
-                        spreadsheet_id = st.secrets["gsheet_id"]
-                    
-                    if not spreadsheet_id:
-                        print("스프레드시트 ID가 설정되지 않았습니다.")
-                        return create_dummy_sheet()
-                    
                     # 스프레드시트 열기
+                    print(f"스프레드시트 ID로 시트를 열고 있습니다: {spreadsheet_id}")
                     spreadsheet = gc.open_by_key(spreadsheet_id)
+                    print(f"스프레드시트 '{spreadsheet.title}'에 연결되었습니다.")
+                    st.success(f"스프레드시트 '{spreadsheet.title}'에 연결되었습니다.")
                     
                     # 필요한 워크시트 확인
                     worksheets = {ws.title: ws for ws in spreadsheet.worksheets()}
+                    print(f"현재 워크시트 목록: {', '.join(worksheets.keys())}")
                     required_sheets = ["problems", "student_answers", "student_weaknesses", "students"]
                     
                     # 필요한 워크시트가 없으면 생성
                     for sheet_name in required_sheets:
                         if sheet_name not in worksheets:
+                            print(f"'{sheet_name}' 워크시트가 없어 새로 생성합니다.")
                             spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=20)
                             print(f"'{sheet_name}' 워크시트를 생성했습니다.")
                     
@@ -128,14 +101,89 @@ def connect_to_sheets():
                     
                     return spreadsheet
                 except Exception as e:
-                    print(f"서비스 계정 파일 사용 오류: {str(e)}")
+                    st.error(f"스프레드시트 열기 오류: {str(e)}")
+                    print(f"스프레드시트 열기 오류: {str(e)}")
+                    print(f"상세 오류: {traceback.format_exc()}")
+                    st.session_state.sheets_connection_status = "error"
+                    st.session_state.sheets_connection_success = False
+                    return create_dummy_sheet()
+            except Exception as e:
+                st.error(f"서비스 계정 정보 사용 중 오류: {str(e)}")
+                print(f"서비스 계정 정보 사용 중 오류: {str(e)}")
+                print(f"상세 오류: {traceback.format_exc()}")
+        else:
+            print("secrets.toml에 서비스 계정 정보가 없습니다. 서비스 계정 파일을 확인합니다.")
+            # 서비스 계정 파일 확인
+            service_account_path = "service_account.json"
             
+            if "GOOGLE_SERVICE_ACCOUNT_PATH" in st.secrets:
+                service_account_path = st.secrets["GOOGLE_SERVICE_ACCOUNT_PATH"]
+                print(f"서비스 계정 파일 경로: {service_account_path}")
+            
+            if os.path.exists(service_account_path):
+                print(f"서비스 계정 파일을 찾았습니다: {service_account_path}")
+                try:
+                    credentials = Credentials.from_service_account_file(
+                        service_account_path, scopes=scope
+                    )
+                    print("서비스 계정 파일로부터 credentials 객체를 생성했습니다.")
+                    gc = gspread.authorize(credentials)
+                    print("서비스 계정 파일로 Google Sheets에 연결되었습니다.")
+                    st.success("서비스 계정 파일로 Google Sheets에 연결되었습니다.")
+                    
+                    # 스프레드시트 ID 확인
+                    spreadsheet_id = ""
+                    if "spreadsheet_id" in st.secrets:
+                        spreadsheet_id = st.secrets["spreadsheet_id"]
+                        print(f"secrets.toml에서 spreadsheet_id를 찾았습니다: {spreadsheet_id}")
+                    elif "gsheet_id" in st.secrets:
+                        spreadsheet_id = st.secrets["gsheet_id"]
+                        print(f"secrets.toml에서 gsheet_id를 찾았습니다: {spreadsheet_id}")
+                    
+                    if not spreadsheet_id:
+                        st.warning("스프레드시트 ID가 설정되지 않았습니다.")
+                        print("스프레드시트 ID가 설정되지 않았습니다.")
+                        return create_dummy_sheet()
+                    
+                    # 스프레드시트 열기
+                    print(f"스프레드시트 ID로 시트를 열고 있습니다: {spreadsheet_id}")
+                    spreadsheet = gc.open_by_key(spreadsheet_id)
+                    print(f"스프레드시트 '{spreadsheet.title}'에 연결되었습니다.")
+                    
+                    # 필요한 워크시트 확인
+                    worksheets = {ws.title: ws for ws in spreadsheet.worksheets()}
+                    print(f"현재 워크시트 목록: {', '.join(worksheets.keys())}")
+                    required_sheets = ["problems", "student_answers", "student_weaknesses", "students"]
+                    
+                    # 필요한 워크시트가 없으면 생성
+                    for sheet_name in required_sheets:
+                        if sheet_name not in worksheets:
+                            print(f"'{sheet_name}' 워크시트가 없어 새로 생성합니다.")
+                            spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=20)
+                            print(f"'{sheet_name}' 워크시트를 생성했습니다.")
+                    
+                    # 성공 표시
+                    st.session_state.sheets_connection_status = "success"
+                    st.session_state.sheets_connection_success = True
+                    
+                    return spreadsheet
+                except Exception as e:
+                    st.error(f"서비스 계정 파일 사용 오류: {str(e)}")
+                    print(f"서비스 계정 파일 사용 오류: {str(e)}")
+                    print(f"상세 오류: {traceback.format_exc()}")
+            else:
+                st.warning(f"서비스 계정 파일을 찾을 수 없습니다: {service_account_path}")
+                print(f"서비스 계정 파일을 찾을 수 없습니다: {service_account_path}")
+            
+            st.warning("GCP 서비스 계정 정보가 올바르게 설정되지 않았습니다. 더미 시트를 사용합니다.")
             print("GCP 서비스 계정 정보가 올바르게 설정되지 않았습니다. 더미 시트를 사용합니다.")
             st.session_state.sheets_connection_status = "error"
             st.session_state.sheets_connection_success = False
             return create_dummy_sheet()
     except Exception as e:
+        st.error(f"Google Sheets 연결 오류: {str(e)}")
         print(f"Google Sheets 연결 오류: {str(e)}")
+        print(f"상세 오류: {traceback.format_exc()}")
         st.session_state.sheets_connection_status = "error"
         st.session_state.sheets_connection_success = False
         return create_dummy_sheet()
