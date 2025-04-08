@@ -1,4 +1,18 @@
 import streamlit as st
+
+# 페이지 설정 - 가장 먼저 호출되어야 함
+st.set_page_config(
+    page_title="GPT 학습 피드백 (우리 학원 전용 튜터)",
+    page_icon="🧠",
+    layout="centered",
+    initial_sidebar_state="collapsed",
+    menu_items={
+        'Get Help': None,
+        'Report a bug': None,
+        'About': None
+    }
+)
+
 import uuid
 import os
 import sys
@@ -33,7 +47,7 @@ try:
         def show_student_performance_dashboard(student_id, student_name, grade, level):
             pass
 except Exception as e:
-    import streamlit as st
+    # 이미 streamlit이 임포트되어 있으므로 중복 임포트 제거
     st.error(f"모듈 임포트 오류: {str(e)}")
 
 # OpenAI API 초기화
@@ -54,19 +68,6 @@ except ImportError:
     st.error("OpenAI 모듈을 불러올 수 없습니다. 'pip install openai==0.28.0' 명령어로 설치해주세요.")
 except Exception as e:
     st.error(f"OpenAI API 초기화 오류: {str(e)}")
-
-# 페이지 설정
-st.set_page_config(
-    page_title="GPT 학습 피드백 (우리 학원 전용 튜터)",
-    page_icon="🧠",
-    layout="centered",
-    initial_sidebar_state="collapsed",
-    menu_items={
-        'Get Help': None,
-        'Report a bug': None,
-        'About': None
-    }
-)
 
 # URL 파라미터 확인 - 재시작 명령 처리
 def check_reset_command():
