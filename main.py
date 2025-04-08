@@ -250,111 +250,110 @@ def student_login_page():
         
     st.title("학생 로그인")
     
-    # 등록된 학생 목록 가져오기
-    try:
-        sheet = connect_to_sheets()
-        if sheet:
-            try:
-                worksheet = sheet.worksheet("students")
-                students = worksheet.get_all_records()
-                if students:
-                    # 학생 선택 옵션
-                    st.markdown("#### 등록된 학생 선택")
-                    
-                    # 학년별 필터링
-                    grade_filter = st.selectbox(
-                        "학년 선택", 
-                        options=["전체"] + admin.GRADE_OPTIONS
-                    )
-                    
-                    # 필터링된 학생 목록
-                    if grade_filter == "전체":
-                        filtered_students = students
-                    else:
-                        filtered_students = [s for s in students if s["학년"] == grade_filter]
-                    
-                    if filtered_students:
-                        student_options = [f"{s['이름']} ({s['학년']}, {s['실력등급']})" for s in filtered_students]
-                        selected_student = st.selectbox("학생 선택", options=student_options)
+    # 탭 생성 - 등록된 학생 목록과 직접 입력하기
+    login_tab1, login_tab2 = st.tabs(["등록된 학생 선택", "직접 입력하기"])
+    
+    with login_tab1:
+        # 등록된 학생 목록 가져오기
+        try:
+            sheet = connect_to_sheets()
+            if sheet:
+                try:
+                    worksheet = sheet.worksheet("students")
+                    students = worksheet.get_all_records()
+                    if students:
+                        # 학년별 필터링
+                        grade_filter = st.selectbox(
+                            "학년 선택", 
+                            options=["전체"] + admin.GRADE_OPTIONS
+                        )
                         
-                        if st.button("로그인", use_container_width=True):
-                            if selected_student:
-                                idx = student_options.index(selected_student)
-                                student_data = filtered_students[idx]
-                                
-                                # 학생 정보 설정
-                                st.session_state.student_id = student_data["학생ID"]
-                                st.session_state.student_name = student_data["이름"]
-                                st.session_state.student_grade = student_data["학년"]
-                                st.session_state.student_level = student_data["실력등급"]
-                                st.session_state.submitted = False
-                                st.session_state.show_result = False
-                                
-                                # 문제 관련 상태 초기화
-                                st.session_state.current_problem = None
-                                st.session_state.feedback = None
-                                st.session_state.score = None
-                                st.session_state.previous_problems = set()
-                                st.session_state.current_round = 1
-                                st.session_state.page = "student_dashboard"
-                                
-                                # 세션 지속을 위한 플래그
-                                st.session_state.login_complete = True
-                                
-                                st.rerun()
+                        # 필터링된 학생 목록
+                        if grade_filter == "전체":
+                            filtered_students = students
+                        else:
+                            filtered_students = [s for s in students if s["학년"] == grade_filter]
+                        
+                        if filtered_students:
+                            student_options = [f"{s['이름']} ({s['학년']}, {s['실력등급']})" for s in filtered_students]
+                            selected_student = st.selectbox("학생 선택", options=student_options)
+                            
+                            if st.button("로그인", use_container_width=True):
+                                if selected_student:
+                                    idx = student_options.index(selected_student)
+                                    student_data = filtered_students[idx]
+                                    
+                                    # 학생 정보 설정
+                                    st.session_state.student_id = student_data["학생ID"]
+                                    st.session_state.student_name = student_data["이름"]
+                                    st.session_state.student_grade = student_data["학년"]
+                                    st.session_state.student_level = student_data["실력등급"]
+                                    st.session_state.submitted = False
+                                    st.session_state.show_result = False
+                                    
+                                    # 문제 관련 상태 초기화
+                                    st.session_state.current_problem = None
+                                    st.session_state.feedback = None
+                                    st.session_state.score = None
+                                    st.session_state.previous_problems = set()
+                                    st.session_state.current_round = 1
+                                    st.session_state.page = "student_dashboard"
+                                    
+                                    # 세션 지속을 위한 플래그
+                                    st.session_state.login_complete = True
+                                    
+                                    st.rerun()
+                        else:
+                            st.info("선택한 학년에 등록된 학생이 없습니다.")
                     else:
-                        st.info("선택한 학년에 등록된 학생이 없습니다.")
-                else:
-                    st.warning("등록된 학생이 없습니다. 교사 관리자에게 문의하세요.")
-            except Exception as e:
-                st.error("학생 정보를 불러오는데 실패했습니다.")
-                st.markdown("### 직접 입력하기")
-                manual_login()
-        else:
+                        st.warning("등록된 학생이 없습니다. 직접 입력하기 탭을 사용하세요.")
+                except Exception as e:
+                    st.error("학생 정보를 불러오는데 실패했습니다.")
+                    st.info("직접 입력하기 탭을 사용하여 로그인하세요.")
+            else:
+                st.error("데이터베이스 연결에 실패했습니다.")
+                st.info("직접 입력하기 탭을 사용하여 로그인하세요.")
+        except Exception as e:
             st.error("데이터베이스 연결에 실패했습니다.")
-            st.markdown("### 직접 입력하기")
-            manual_login()
-    except Exception as e:
-        st.error("데이터베이스 연결에 실패했습니다.")
-        st.markdown("### 직접 입력하기")
-        manual_login()
+            st.info("직접 입력하기 탭을 사용하여 로그인하세요.")
+    
+    with login_tab2:
+        # 직접 입력하기 폼
+        with st.form("manual_login_form"):
+            st.write("### 인증 정보 생성")
+            student_name = st.text_input("이름을 입력하세요")
+            
+            # 학년 선택
+            grade = st.selectbox("학년", options=admin.GRADE_OPTIONS)
+            
+            # 실력 등급 선택
+            level = st.selectbox("실력 등급", options=admin.LEVEL_OPTIONS)
+            
+            submit_button = st.form_submit_button("로그인")
+            
+            if submit_button and student_name:
+                # 학생 정보 설정
+                st.session_state.student_id = str(uuid.uuid4())
+                st.session_state.student_name = student_name
+                st.session_state.student_grade = grade
+                st.session_state.student_level = level
+                st.session_state.submitted = False
+                st.session_state.show_result = False
+                
+                # 문제 관련 상태 초기화
+                st.session_state.current_problem = None
+                st.session_state.feedback = None
+                st.session_state.score = None
+                st.session_state.previous_problems = set()
+                st.session_state.current_round = 1
+                st.session_state.page = "student_dashboard"
+                
+                st.rerun()
     
     # 뒤로 가기 버튼
     if st.button("← 뒤로 가기", key="back_btn"):
         st.session_state.page = "intro"
         st.rerun()
-
-def manual_login():
-    """직접 입력하여 로그인"""
-    with st.form("manual_login_form"):
-        student_name = st.text_input("이름을 입력하세요")
-        
-        # 학년 선택
-        grade = st.selectbox("학년", options=admin.GRADE_OPTIONS)
-        
-        # 실력 등급 선택
-        level = st.selectbox("실력 등급", options=admin.LEVEL_OPTIONS)
-        
-        submit_button = st.form_submit_button("로그인")
-        
-        if submit_button and student_name:
-            # 학생 정보 설정
-            st.session_state.student_id = str(uuid.uuid4())
-            st.session_state.student_name = student_name
-            st.session_state.student_grade = grade
-            st.session_state.student_level = level
-            st.session_state.submitted = False
-            st.session_state.show_result = False
-            
-            # 문제 관련 상태 초기화
-            st.session_state.current_problem = None
-            st.session_state.feedback = None
-            st.session_state.score = None
-            st.session_state.previous_problems = set()
-            st.session_state.current_round = 1
-            st.session_state.page = "student_dashboard"
-            
-            st.rerun()
 
 def student_dashboard():
     """학생 대시보드 페이지"""
@@ -1165,8 +1164,19 @@ def exam_score_page():
             try:
                 # API에서 피드백 생성
                 from gpt_feedback import generate_feedback
-                score, api_feedback = generate_feedback(question, student_answer, correct_answer, explanation)
-                feedback = api_feedback
+                # 문제 데이터를 문자열에서 딕셔너리 형태로 변환하여 함수에 전달
+                problem_dict = {
+                    "문제내용": question,
+                    "정답": correct_answer,
+                    "해설": explanation,
+                    "문제유형": problem_data.get("문제유형", "객관식"),
+                    "과목": problem_data.get("과목", ""),
+                    "학년": problem_data.get("학년", ""),
+                    "난이도": problem_data.get("난이도", ""),
+                    "보기정보": problem_data.get("보기정보", {})
+                }
+                
+                score, feedback = generate_feedback(problem_dict, student_answer)
                 
                 # 결과 저장
                 problem_data['피드백'] = feedback

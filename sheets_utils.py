@@ -36,12 +36,6 @@ def connect_to_sheets():
             print("secrets.toml 파일이 없습니다. 더미 시트를 사용합니다.")
             return create_dummy_sheet()
         
-        # 더미 데이터 사용 설정 확인
-        if "use_dummy_data" in st.secrets and st.secrets["use_dummy_data"]:
-            st.info("use_dummy_data 설정이 활성화되어 있어 더미 시트를 사용합니다.")
-            print("use_dummy_data 설정이 활성화되어 있어 더미 시트를 사용합니다.")
-            return create_dummy_sheet()
-        
         # 스프레드시트 ID 확인
         spreadsheet_id = ""
         if "spreadsheet_id" in st.secrets:
@@ -179,47 +173,101 @@ def connect_to_sheets():
                     print(share_msg)
                 return create_dummy_sheet()
             except gspread.exceptions.APIError as api_err:
-                if "404" in str(api_err):
-                    error_msg = f"스프레드시트를 찾을 수 없습니다 (ID: {spreadsheet_id}). 올바른 ID인지 확인하세요."
-                    st.error(error_msg)
-                    print(error_msg)
-                elif "403" in str(api_err):
-                    error_msg = f"스프레드시트에 접근 권한이 없습니다 (ID: {spreadsheet_id})."
-                    st.error(error_msg)
-                    print(error_msg)
+                error_msg = f"Google API 오류: {str(api_err)}"
+                print(error_msg)
+                print(f"상세 오류: {traceback.format_exc()}")
+                
+                # API 오류 발생 시 실제 스프레드시트에 접근 시도
+                try:
+                    # 스프레드시트 존재 여부 확인을 위한 다른 시도
+                    sheet_list = gc.list_spreadsheet_files()
+                    sheet_titles = [s['name'] for s in sheet_list]
+                    print(f"사용 가능한 스프레드시트 목록: {', '.join(sheet_titles)}")
+                    
+                    # 비슷한 이름의 스프레드시트가 있는지 확인
+                    target_sheet = None
+                    for sheet in sheet_list:
+                        if sheet['id'] == spreadsheet_id:
+                            target_sheet = sheet
+                            break
+                    
+                    if target_sheet:
+                        try:
+                            # 직접 이름으로 열기 시도
+                            spreadsheet = gc.open(target_sheet['name'])
+                            print(f"이름으로 스프레드시트 '{spreadsheet.title}'에 연결되었습니다.")
+                            st.success(f"이름으로 스프레드시트 '{spreadsheet.title}'에 연결되었습니다.")
+                            st.session_state.sheets_connection_status = "success"
+                            st.session_state.sheets_connection_success = True
+                            st.session_state.using_dummy_sheet = False
+                            return spreadsheet
+                        except Exception as e2:
+                            print(f"이름으로 스프레드시트 열기 실패: {str(e2)}")
+                except Exception as list_err:
+                    print(f"스프레드시트 목록 가져오기 실패: {str(list_err)}")
+                
+                # 여전히 실패하면 더미 시트 사용
+                st.error(error_msg)
+                
+                # 오류 처리 개선 - 403 오류는 권한 문제
+                if "403" in str(api_err):
                     if service_account_email:
                         share_msg = f"서비스 계정 이메일({service_account_email})이 스프레드시트에 '편집자' 권한으로 공유되어 있는지 확인하세요."
                         st.error(share_msg)
                         print(share_msg)
-                else:
-                    error_msg = f"Google API 오류: {str(api_err)}"
-                    st.error(error_msg)
-                    print(error_msg)
-                    print(f"상세 오류: {traceback.format_exc()}")
+                
+                # 더미 시트 대신 실제 서비스 계정으로 새 스프레드시트 생성 시도
+                try:
+                    print("새 스프레드시트 생성을 시도합니다.")
+                    new_spreadsheet = gc.create('Tutor-bot-auto-created')
+                    if service_account_email:
+                        # 시트 생성 후 자신에게 공유 - 이미 소유자이므로 필요 없음
+                        # new_spreadsheet.share(service_account_email, perm_type='user', role='writer')
+                        print(f"새 스프레드시트가 생성되었습니다. ID: {new_spreadsheet.id}")
+                        
+                        # secrets.toml 파일 업데이트 안내
+                        st.warning(f"새 스프레드시트가 생성되었습니다. ID: {new_spreadsheet.id}")
+                        st.warning(f".streamlit/secrets.toml 파일의 spreadsheet_id 값을 '{new_spreadsheet.id}'로 업데이트하세요.")
+                        
+                        # 필요한 워크시트 생성
+                        required_sheets = ["problems", "student_answers", "student_weaknesses", "students", "teachers"]
+                        for sheet_name in required_sheets:
+                            new_spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=20)
+                            print(f"'{sheet_name}' 워크시트를 생성했습니다.")
+                        
+                        # 기본 시트 삭제
+                        try:
+                            default_sheet = new_spreadsheet.sheet1
+                            new_spreadsheet.del_worksheet(default_sheet)
+                        except:
+                            pass
+                        
+                        st.session_state.sheets_connection_status = "success"
+                        st.session_state.sheets_connection_success = True
+                        st.session_state.using_dummy_sheet = False
+                        return new_spreadsheet
+                except Exception as create_err:
+                    print(f"새 스프레드시트 생성 실패: {str(create_err)}")
+                
+                # 모든 시도가 실패하면 더미 시트 사용
                 return create_dummy_sheet()
             except Exception as e:
-                st.error(f"스프레드시트 열기 오류: {str(e)}")
-                print(f"스프레드시트 열기 오류: {str(e)}")
+                error_msg = f"스프레드시트 접근 중 예기치 않은 오류: {str(e)}"
+                st.error(error_msg)
+                print(error_msg)
                 print(f"상세 오류: {traceback.format_exc()}")
                 return create_dummy_sheet()
-        except Exception as e:
-            st.error(f"Google Sheets API 인증 오류: {str(e)}")
-            print(f"Google Sheets API 인증 오류: {str(e)}")
+        except Exception as auth_err:
+            error_msg = f"Google API 인증 오류: {str(auth_err)}"
+            st.error(error_msg)
+            print(error_msg)
             print(f"상세 오류: {traceback.format_exc()}")
-            
-        # 여기까지 왔다면 오류가 발생한 것이므로 더미 시트 반환
-        st.session_state.sheets_connection_status = "error"
-        st.session_state.sheets_connection_success = False
-        st.session_state.using_dummy_sheet = True
-        return create_dummy_sheet()
+            return create_dummy_sheet()
             
     except Exception as e:
-        st.error(f"Google Sheets 연결 오류: {str(e)}")
-        print(f"Google Sheets 연결 오류: {str(e)}")
+        st.error(f"Google Sheets 연결 중 오류가 발생했습니다: {str(e)}")
+        print(f"Google Sheets 연결 중 오류가 발생했습니다: {str(e)}")
         print(f"상세 오류: {traceback.format_exc()}")
-        st.session_state.sheets_connection_status = "error"
-        st.session_state.sheets_connection_success = False
-        st.session_state.using_dummy_sheet = True
         return create_dummy_sheet()
 
 def create_dummy_sheet():

@@ -14,7 +14,7 @@ def generate_feedback(problem, student_answer, student_id="", student_name=""):
         student_name: 학생 이름 (선택)
     
     Returns:
-        생성된 피드백 텍스트
+        tuple: (점수, 피드백 텍스트)
     """
     try:
         problem_type = problem.get("문제유형", "객관식")
@@ -38,7 +38,7 @@ def generate_feedback(problem, student_answer, student_id="", student_name=""):
             {problem.get('문제내용', '문제 내용 없음')}
             
             ## 보기
-            {problem.get('보기', '보기 없음')}
+            {problem.get('보기정보', '보기 없음')}
             
             ## 학생 답변
             학생이 선택한 답: {student_answer}
@@ -173,6 +173,21 @@ def generate_feedback(problem, student_answer, student_id="", student_name=""):
                 
                 # 응답이 유효한지 확인
                 if feedback and len(feedback) > 50:  # 최소 응답 길이 확인
+                    # 점수 추출 시도
+                    try:
+                        score_line = next((line for line in feedback.split('\n') if "## 점수:" in line or "##점수:" in line), "## 점수: 0")
+                        score_str = score_line.split(":")[-1].strip()
+                        # 숫자만 추출
+                        score = int(''.join(filter(str.isdigit, score_str)))
+                    except:
+                        # 객관식인 경우 정답 여부로 점수 결정
+                        if problem_type == "객관식" and problem.get("정답") == student_answer:
+                            score = 100
+                        elif problem_type == "객관식":
+                            score = 0
+                        else:
+                            score = 50  # 기본값 - 주관식이고 점수 추출 실패
+                    
                     break
                 else:
                     retry_count += 1
@@ -184,14 +199,20 @@ def generate_feedback(problem, student_answer, student_id="", student_name=""):
         
         # 결과 반환
         if retry_count < max_retries:
-            return feedback
+            return (score, feedback)
         else:
             raise Exception("최대 재시도 횟수 초과")
     
     except Exception as e:
         print(f"피드백 생성 중 오류 발생: {str(e)}")
-        return f"""
-        ## 점수: {'100' if problem.get('정답') == student_answer else '0'}
+        # 객관식인 경우 정답 여부로 점수 결정
+        if problem_type == "객관식" and problem.get("정답") == student_answer:
+            score = 100
+        else:
+            score = 0
+            
+        default_feedback = f"""
+        ## 점수: {score}
         
         ## 피드백
         현재 피드백 서비스에 일시적인 문제가 있습니다. 
@@ -200,3 +221,4 @@ def generate_feedback(problem, student_answer, student_id="", student_name=""):
         정답: {problem.get('정답', '정답 정보 없음')}
         해설: {problem.get('해설', '해설 정보 없음')}
         """
+        return (score, default_feedback)
