@@ -22,6 +22,11 @@ SCOPES = [
 
 def connect_to_sheets():
     """구글 스프레드시트에 연결합니다."""
+    # 더미 데이터 사용 설정 확인
+    if hasattr(st, 'secrets') and st.secrets.get("use_dummy_data", False):
+        print("더미 데이터 사용 모드로 실행합니다. 구글 스프레드시트에 연결하지 않습니다.")
+        return None
+    
     if not gspread_imported:
         error_msg = "구글 시트 연결에 필요한 패키지가 설치되지 않았습니다. 'pip install gspread google-auth' 명령으로 설치해주세요."
         st.error(error_msg)
@@ -181,6 +186,11 @@ def get_random_problem(student_id=None, student_grade=None, problem_type=None):
     student_id가 제공되면 학생의 약점에 기반한 문제를 선택합니다.
     연결 실패 시 더미 문제를 제공합니다.
     """
+    # 더미 데이터 사용 설정 확인
+    if hasattr(st, 'secrets') and st.secrets.get("use_dummy_data", False):
+        print(f"더미 데이터 사용 모드로 실행합니다. 학년 '{student_grade}'에 맞는 더미 문제를 생성합니다.")
+        return get_dummy_problem(student_grade)
+    
     # 스프레드시트 연결
     sheet = connect_to_sheets()
     if not sheet:
@@ -379,6 +389,11 @@ def save_student_answer(student_id, student_name, student_grade, problem_id, pro
     if not student_id or not problem_id:
         return False
     
+    # 더미 데이터 사용 모드 확인
+    if hasattr(st, 'secrets') and st.secrets.get("use_dummy_data", False):
+        print("더미 데이터 사용 모드로 실행합니다. 학생 답안을 저장하지 않습니다.")
+        return True
+    
     # 스프레드시트 연결
     sheet = connect_to_sheets()
     if not sheet:
@@ -427,6 +442,11 @@ def update_problem_stats(student_id, problem_id, keywords, is_correct):
     """학생의 문제 풀이 결과를 바탕으로 약점 분석 데이터를 업데이트합니다."""
     if not student_id or not keywords:
         return False
+    
+    # 더미 데이터 사용 모드 확인
+    if hasattr(st, 'secrets') and st.secrets.get("use_dummy_data", False):
+        print("더미 데이터 사용 모드로 실행합니다. 문제 통계를 업데이트하지 않습니다.")
+        return True
     
     # 스프레드시트 연결
     sheet = connect_to_sheets()
@@ -484,6 +504,11 @@ def save_exam_result(student_id, student_name, student_grade, results):
     """시험 결과를 학년별로 정리하여 저장합니다."""
     if not student_id or not results:
         return False
+    
+    # 더미 데이터 사용 모드 확인
+    if hasattr(st, 'secrets') and st.secrets.get("use_dummy_data", False):
+        print("더미 데이터 사용 모드로 실행합니다. 시험 결과를 저장하지 않습니다.")
+        return True
     
     # 스프레드시트 연결
     sheet = connect_to_sheets()
