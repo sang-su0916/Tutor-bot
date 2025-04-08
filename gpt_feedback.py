@@ -1,15 +1,15 @@
-import openai
 import streamlit as st
 import time
+import google.generativeai as genai
 from datetime import datetime
 
 def generate_feedback(question, student_answer, correct_answer, explanation):
     """
-    GPT를 사용하여 학생의 답안을 채점하고 피드백을 생성합니다.
+    Gemini를 사용하여 학생의 답안을 채점하고 피드백을 생성합니다.
     """
     try:
         # API 키 확인
-        if "OPENAI_API_KEY" not in st.secrets:
+        if "GOOGLE_API_KEY" not in st.secrets:
             # 단답형 또는 객관식 여부 확인
             is_objective = correct_answer.startswith("보기")
             
@@ -26,8 +26,8 @@ def generate_feedback(question, student_answer, correct_answer, explanation):
             score = 100 if is_correct else 0
             return score, "AI 튜터 연결에 실패했습니다. 기본 채점 결과만 제공됩니다."
         
-        # OpenAI API 키 설정
-        openai.api_key = st.secrets["OPENAI_API_KEY"]
+        # Gemini API 키 설정
+        genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
         
         # 단답형 또는 객관식 여부 확인
         is_objective = correct_answer.startswith("보기")
@@ -85,25 +85,19 @@ def generate_feedback(question, student_answer, correct_answer, explanation):
             피드백: [피드백 내용]
             """
 
-        # API 호출 - OpenAI 0.28 버전용
+        # Gemini API 호출
         try:
-            # OpenAI 0.28 API 호출
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "당신은 학생들의 답안을 채점하고 친절한 피드백을 제공하는 AI 튜터입니다."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=800,
-                request_timeout=30
-            )
+            # 모델 생성
+            model = genai.GenerativeModel('gemini-pro')
             
-            # 응답 파싱 - 0.28 버전 호환성 수정
-            output = response.choices[0].message.content.strip()
+            # API 호출
+            response = model.generate_content(prompt)
+            
+            # 응답 파싱
+            output = response.text
         except Exception as api_error:
             # API 호출 실패 시 기본 응답 생성
-            print(f"OpenAI API 호출 실패: {api_error}")
+            print(f"Gemini API 호출 실패: {api_error}")
             if is_objective:
                 # 객관식: 정확히 일치해야 함
                 is_correct = (student_answer == correct_answer)

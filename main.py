@@ -52,22 +52,16 @@ except Exception as e:
 
 # OpenAI API 초기화
 try:
-    import openai
-    if "OPENAI_API_KEY" in st.secrets:
-        openai.api_key = st.secrets["OPENAI_API_KEY"]
-        # 버전 확인 - 이미 0.28 버전이 설치되어 있는지 확인
-        if hasattr(openai, '__version__'):
-            version = openai.__version__
-            if version.startswith('0.28'):
-                print(f"OpenAI 버전 {version} 사용 중")
-            else:
-                st.warning(f"현재 OpenAI 버전 {version}이 0.28과 다릅니다. 'pip install openai==0.28.0' 명령어로 설치해주세요.")
-        else:
-            st.warning("OpenAI 버전을 확인할 수 없습니다. 'pip install openai==0.28.0' 명령어로 설치해주세요.")
+    import google.generativeai as genai
+    if "GOOGLE_API_KEY" in st.secrets:
+        genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+        print("Gemini API 키가 성공적으로 설정되었습니다.")
+    else:
+        st.warning("Gemini API 키가 설정되지 않았습니다. .streamlit/secrets.toml 파일에 GOOGLE_API_KEY를 설정해주세요.")
 except ImportError:
-    st.error("OpenAI 모듈을 불러올 수 없습니다. 'pip install openai==0.28.0' 명령어로 설치해주세요.")
+    st.error("Google Generative AI 모듈을 불러올 수 없습니다. 'pip install google-generativeai' 명령어로 설치해주세요.")
 except Exception as e:
-    st.error(f"OpenAI API 초기화 오류: {str(e)}")
+    st.error(f"Gemini API 초기화 오류: {str(e)}")
 
 # URL 파라미터 확인 - 재시작 명령 처리
 def check_reset_command():
@@ -121,10 +115,10 @@ def intro_page():
                 st.error("Google Sheets: 연결 안됨 ❌")
         
         with col2:
-            if api_status["openai"]:
-                st.success("OpenAI API: 연결됨 ✅")
+            if api_status["gemini"]:
+                st.success("Gemini API: 연결됨 ✅")
             else:
-                st.error("OpenAI API: 연결 안됨 ❌")
+                st.error("Gemini API: 연결 안됨 ❌")
         
         if api_status["error_messages"]:
             st.markdown("#### 오류 메시지")
@@ -997,9 +991,9 @@ def exam_score_page():
                     "첨삭": ""
                 }
                 
-                # GPT 첨삭 생성 시도 (옵션)
+                # Gemini 첨삭 생성 시도 (옵션)
                 try:
-                    if "OPENAI_API_KEY" in st.secrets:
+                    if "GOOGLE_API_KEY" in st.secrets:
                         score, feedback_text = generate_feedback(
                             problem_data.get('문제', ''),
                             result['student_answer'],
@@ -1008,7 +1002,7 @@ def exam_score_page():
                         )
                         feedback["첨삭"] = feedback_text
                 except:
-                    # GPT 피드백 생성 실패 시 기본 피드백 사용
+                    # Gemini 피드백 생성 실패 시 기본 피드백 사용
                     if result['is_correct']:
                         feedback["첨삭"] = "정답입니다! 해설을 통해 개념을 확실히 이해해 보세요."
                     else:
@@ -1067,10 +1061,10 @@ def exam_score_page():
         st.rerun()
 
 def check_api_connections():
-    """Google Sheets와 OpenAI API 연결 상태를 확인합니다."""
+    """Google Sheets와 Gemini API 연결 상태를 확인합니다."""
     connections = {
         "google_sheets": False,
-        "openai": False,
+        "gemini": False,
         "error_messages": []
     }
     
@@ -1091,35 +1085,30 @@ def check_api_connections():
     except Exception as e:
         connections["error_messages"].append(f"Google Sheets 연결 오류: {str(e)}")
     
-    # OpenAI API 연결 확인
+    # Gemini API 연결 확인
     try:
-        if "OPENAI_API_KEY" in st.secrets:
-            import openai
-            openai.api_key = st.secrets["OPENAI_API_KEY"]
+        if "GOOGLE_API_KEY" in st.secrets:
+            import google.generativeai as genai
             
             try:
-                # OpenAI 0.28 버전 API 호출
-                response = openai.ChatCompletion.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "You are a helpful assistant."},
-                        {"role": "user", "content": "Hello!"}
-                    ],
-                    max_tokens=5
-                )
+                # Gemini API 초기화
+                genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
                 
-                # 0.28 버전에서는 response.choices[0].message.content로 접근
-                if response and hasattr(response.choices[0], 'message') and hasattr(response.choices[0].message, 'content'):
-                    # 정상적으로 응답이 있으면 연결 성공
-                    connections["openai"] = True
+                # 간단한 API 호출 테스트
+                model = genai.GenerativeModel('gemini-pro')
+                response = model.generate_content("Hello!")
+                
+                # 응답이 있으면 연결 성공
+                if response and hasattr(response, 'text'):
+                    connections["gemini"] = True
                 else:
-                    connections["error_messages"].append("OpenAI API 응답 형식이 예상과 다릅니다.")
+                    connections["error_messages"].append("Gemini API 응답이 예상과 다릅니다.")
             except Exception as e:
-                connections["error_messages"].append(f"OpenAI API 오류: {str(e)}")
+                connections["error_messages"].append(f"Gemini API 오류: {str(e)}")
         else:
-            connections["error_messages"].append("OpenAI API 키가 설정되지 않았습니다.")
+            connections["error_messages"].append("Gemini API 키가 설정되지 않았습니다.")
     except Exception as e:
-        connections["error_messages"].append(f"OpenAI API 연결 오류: {str(e)}")
+        connections["error_messages"].append(f"Gemini API 연결 오류: {str(e)}")
     
     return connections
 
