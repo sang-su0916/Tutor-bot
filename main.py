@@ -271,12 +271,20 @@ def student_dashboard():
     
     with col1:
         if st.button("📝 문제 풀기 (20문제 시험)", use_container_width=True):
-            # 문제 풀기 세션 초기화
+            # 문제 풀기 세션 완전 초기화
+            for key in list(st.session_state.keys()):
+                if key.startswith("exam_") or key in ["student_answers", "used_problem_ids", "all_problems_loaded", 
+                                                     "problem_count", "max_problems", "start_time", "time_limit"]:
+                    if key in st.session_state:
+                        del st.session_state[key]
+            
+            # 기본값 설정
             st.session_state.problem_count = 0
             st.session_state.max_problems = 20
             st.session_state.start_time = time.time()
             st.session_state.time_limit = 50 * 60  # 50분(초 단위)
             st.session_state.student_answers = {}
+            st.session_state.used_problem_ids = set()  # 사용된 문제 ID 추적
             
             # 시험 관련 상태 초기화
             if 'exam_initialized' in st.session_state:
@@ -311,44 +319,86 @@ def student_dashboard():
 def load_exam_problems(student_id, student_grade, problem_count=20):
     """
     시험에 사용할 문제를 학생 학년과 다양한 유형을 고려하여 로드합니다.
+    문제 ID를 추적하여 중복을 방지합니다.
     """
+    # 이미 로드된 문제가 있고 충분한 경우 재사용
+    if ('exam_problems' in st.session_state and 
+        st.session_state.exam_problems and 
+        len(st.session_state.exam_problems) >= problem_count):
+        st.info("이미 로드된 문제를 사용합니다.")
+        return st.session_state.exam_problems
+    
+    # 사용된 문제 ID 세션 초기화
+    if 'used_problem_ids' not in st.session_state:
+        st.session_state.used_problem_ids = set()
+    
+    # 기존 시험 문제 ID 추적
+    if 'exam_problems' in st.session_state and st.session_state.exam_problems:
+        for problem in st.session_state.exam_problems:
+            if "문제ID" in problem:
+                st.session_state.used_problem_ids.add(problem["문제ID"])
+    
     problems = []
-    used_problem_ids = set()
     attempts = 0
-    max_attempts = 100  # 최대 시도 횟수 (문제가 충분하지 않은 경우 무한 루프 방지)
+    max_attempts = 100  # 최대 시도 횟수
     
     sheet = connect_to_sheets()
     if not sheet:
         st.error("Google Sheets 연결에 실패했습니다.")
-        return problems
+        return generate_dummy_problems(student_grade, problem_count)
     
     # 문제 워크시트에서 모든 문제 가져오기
     try:
         problems_ws = sheet.worksheet("problems")
         all_problems = problems_ws.get_all_records()
+        st.success(f"{len(all_problems)}개의 문제를 성공적으로 로드했습니다.")
     except Exception as e:
         st.error(f"문제 데이터를 가져오는데 실패했습니다: {str(e)}")
-        return problems
+        return generate_dummy_problems(student_grade, problem_count)
     
     # 학년에 맞는 문제만 필터링
-    valid_problems = []
-    for p in all_problems:
-        if ("문제ID" in p and "학년" in p and "문제내용" in p and "정답" in p and 
-            p["학년"] == student_grade.replace("학년", "").strip()):
-            valid_problems.append(p)
+    filtered_problems = []
     
-    if not valid_problems:
-        st.warning(f"{student_grade} 학년에 맞는 문제가 없습니다. 모든 문제를 사용합니다.")
-        valid_problems = all_problems
+    # 학년 정규화
+    normalized_student_grade = normalize_grade(student_grade)
+    if not normalized_student_grade:
+        st.warning("학년 정보가 유효하지 않습니다. 기본 문제를 사용합니다.")
+        normalized_student_grade = "중1"  # 기본값
+    
+    st.info(f"학년 '{student_grade}'를 '{normalized_student_grade}'로 정규화했습니다.")
+    
+    for p in all_problems:
+        if ("문제ID" in p and "학년" in p and "문제내용" in p and "정답" in p):
+            # 문제 학년 정규화 및 비교
+            problem_grade = p.get("학년", "")
+            normalized_problem_grade = normalize_grade(problem_grade)
+            
+            if normalized_problem_grade == normalized_student_grade:
+                # 이미 사용된 ID 제외
+                if p["문제ID"] not in st.session_state.used_problem_ids:
+                    # 보기 정보 포맷팅
+                    if "보기정보" not in p:
+                        p["보기정보"] = {}
+                        for i in range(1, 6):
+                            option_key = f"보기{i}"
+                            if option_key in p and p[option_key]:
+                                p["보기정보"][option_key] = p[option_key]
+                    
+                    filtered_problems.append(p)
+    
+    st.info(f"학년 '{normalized_student_grade}'에 맞는 문제 {len(filtered_problems)}개를 찾았습니다.")
     
     # 문제 유형별로 분류
     problem_types = {}
-    for p in valid_problems:
+    for p in filtered_problems:
         if "문제유형" in p and p["문제유형"]:
             ptype = p["문제유형"]
             if ptype not in problem_types:
                 problem_types[ptype] = []
             problem_types[ptype].append(p)
+    
+    # 문제 유형별 통계 표시
+    st.info(f"문제 유형 분포: {', '.join([f'{t}: {len(ps)}개' for t, ps in problem_types.items()])}")
     
     # 각 유형별로 골고루 문제 선택
     remaining_count = problem_count
@@ -369,53 +419,76 @@ def load_exam_problems(student_id, student_grade, problem_count=20):
             selected = random.sample(type_problems, count) if len(type_problems) > count else type_problems
             
             for p in selected:
-                if p["문제ID"] not in used_problem_ids:
-                    problems.append(process_problem(p))
-                    used_problem_ids.add(p["문제ID"])
+                if p["문제ID"] not in st.session_state.used_problem_ids:
+                    problems.append(p)
+                    st.session_state.used_problem_ids.add(p["문제ID"])
     
     # 나머지 문제 수는 무작위로 선택
-    remaining_valid_problems = [p for p in valid_problems if p["문제ID"] not in used_problem_ids]
+    remaining_problems = [p for p in filtered_problems if p["문제ID"] not in st.session_state.used_problem_ids]
     
-    while len(problems) < problem_count and remaining_valid_problems and attempts < max_attempts:
-        random_problem = random.choice(remaining_valid_problems)
-        if random_problem["문제ID"] not in used_problem_ids:
-            problems.append(process_problem(random_problem))
-            used_problem_ids.add(random_problem["문제ID"])
-            remaining_valid_problems.remove(random_problem)
+    while len(problems) < problem_count and remaining_problems and attempts < max_attempts:
+        random_problem = random.choice(remaining_problems)
+        if random_problem["문제ID"] not in st.session_state.used_problem_ids:
+            problems.append(random_problem)
+            st.session_state.used_problem_ids.add(random_problem["문제ID"])
+            remaining_problems.remove(random_problem)
         attempts += 1
     
     # 충분한 문제가 없는 경우 더미 문제로 채우기
-    while len(problems) < problem_count:
-        dummy_problem = get_dummy_problem(student_grade)
-        dummy_problem["문제ID"] = f"dummy-{uuid.uuid4()}"  # 고유 ID 생성
-        if dummy_problem["문제ID"] not in used_problem_ids:
-            problems.append(dummy_problem)
-            used_problem_ids.add(dummy_problem["문제ID"])
+    if len(problems) < problem_count:
+        dummy_count = problem_count - len(problems)
+        st.warning(f"학년에 맞는 문제가 충분하지 않아 {dummy_count}개의 더미 문제를 추가합니다.")
+        dummy_problems = generate_dummy_problems(student_grade, dummy_count)
+        problems.extend(dummy_problems)
+        
+        # 더미 문제 ID 추적
+        for p in dummy_problems:
+            if "문제ID" in p:
+                st.session_state.used_problem_ids.add(p["문제ID"])
     
     return problems[:problem_count]  # 최대 problem_count개 반환
 
-def process_problem(problem):
-    """문제 데이터를 정리하여 반환합니다."""
-    processed = {
-        "문제ID": problem["문제ID"],
-        "과목": problem.get("과목", "영어"),
-        "학년": problem.get("학년", ""),
-        "문제유형": problem.get("문제유형", "객관식"),
-        "난이도": problem.get("난이도", "중"),
-        "문제내용": problem["문제내용"],
-        "정답": problem["정답"],
-        "키워드": problem.get("키워드", ""),
-        "해설": problem.get("해설", "")
-    }
+def normalize_grade(grade_str):
+    """
+    학년 문자열을 표준 형식(중1, 중2, 중3, 고1, 고2, 고3)으로 정규화합니다.
+    """
+    if not grade_str:
+        return ""
     
-    # 보기 정보 처리
-    processed["보기정보"] = {}
-    for i in range(1, 6):
-        option_key = f"보기{i}"
-        if option_key in problem and problem[option_key]:
-            processed["보기정보"][option_key] = problem[option_key]
+    # 문자열 정리
+    normalized = grade_str.replace("학년", "").strip()
     
-    return processed
+    # 학교급 처리
+    if "중학교" in grade_str or "중" in grade_str:
+        grade_prefix = "중"
+    elif "고등학교" in grade_str or "고" in grade_str:
+        grade_prefix = "고"
+    else:
+        # 학교급 정보가 없으면 중학교로 가정
+        grade_prefix = "중"
+    
+    # 학년 숫자 추출
+    grade_number = None
+    for char in normalized:
+        if char.isdigit():
+            grade_number = char
+            break
+    
+    # 학년 숫자가 1~3이 아니면 기본값 1로 설정
+    if grade_number not in ["1", "2", "3"]:
+        grade_number = "1"
+    
+    # 정규화된 형식 반환
+    return f"{grade_prefix}{grade_number}"
+
+def generate_dummy_problems(student_grade, count=20):
+    """학생 학년에 맞는 더미 문제를 여러 개 생성합니다."""
+    problems = []
+    for i in range(count):
+        dummy_problem = get_dummy_problem(student_grade)
+        dummy_problem["문제ID"] = f"dummy-{uuid.uuid4()}"  # 고유 ID 생성
+        problems.append(dummy_problem)
+    return problems
 
 def exam_page():
     """시험 페이지 - 모든 문제를 한 페이지에 표시합니다."""
@@ -426,18 +499,19 @@ def exam_page():
             st.rerun()
         return
     
-    # 시험 상태 확인
-    if 'exam_initialized' not in st.session_state or not st.session_state.exam_initialized:
-        # 시험 초기화
-        st.session_state.exam_initialized = True
-        st.session_state.student_answers = {}
-        st.session_state.exam_problems = None  # 이미 로드된 문제가 있으면 초기화
-        st.session_state.exam_answered_count = 0
-        st.session_state.exam_start_time = time.time()
-        st.session_state.exam_time_limit = 50 * 60  # 50분
-        
-        # 시험 문제 로드
-        with st.spinner("시험 문제를 불러오는 중..."):
+    # 로딩 스피너 표시
+    with st.spinner("시험 준비 중..."):
+        # 시험 상태 확인
+        if 'exam_initialized' not in st.session_state or not st.session_state.exam_initialized:
+            # 시험 초기화
+            st.session_state.exam_initialized = True
+            st.session_state.student_answers = {}
+            st.session_state.exam_problems = None  # 이미 로드된 문제가 있으면 초기화
+            st.session_state.exam_answered_count = 0
+            st.session_state.exam_start_time = time.time()
+            st.session_state.exam_time_limit = 50 * 60  # 50분
+            
+            # 시험 문제 로드
             st.session_state.exam_problems = load_exam_problems(
                 st.session_state.student_id, 
                 st.session_state.student_grade, 
@@ -445,8 +519,12 @@ def exam_page():
             )
             
             # 문제 로드 확인
-            if not st.session_state.exam_problems or len(st.session_state.exam_problems) < 20:
-                st.warning(f"학년에 맞는 문제를 충분히 불러오지 못했습니다. 가능한 문제로 시험을 구성합니다.")
+            if not st.session_state.exam_problems:
+                st.error("문제를 로드하지 못했습니다. 다시 시도해주세요.")
+                if st.button("대시보드로 돌아가기", key="go_back_dashboard_error"):
+                    st.session_state.page = "student_dashboard"
+                    st.rerun()
+                return
     
     # 헤더 표시
     st.title("시험지")
@@ -474,15 +552,16 @@ def exam_page():
         st.rerun()
     
     # 시험 진행 상태
-    st.info(f"총 20개의 문제가 있습니다. 모든 문제를 풀고 제출하세요.")
+    actual_problem_count = len(st.session_state.exam_problems)
+    st.info(f"총 {actual_problem_count}개의 문제가 있습니다. 모든 문제를 풀고 제출하세요.")
     
     # 문제 수 확인
-    actual_problem_count = len(st.session_state.exam_problems)
     if actual_problem_count < 20:
         st.warning(f"현재 {actual_problem_count}개의 문제만 로드되었습니다.")
     
     # 폼 생성
     with st.form("exam_form"):
+        # 각 문제 표시
         for idx, problem in enumerate(st.session_state.exam_problems, 1):
             # 문제 ID
             problem_id = problem["문제ID"]
@@ -509,7 +588,7 @@ def exam_page():
                     
                     for key, text in problem["보기정보"].items():
                         # 중복된 보기 텍스트 제거
-                        if text not in seen_options_text:
+                        if text and text not in seen_options_text:
                             options.append(key)
                             option_texts[key] = text
                             seen_options_text.add(text)
@@ -555,14 +634,21 @@ def exam_page():
         
         if submit_button:
             # 제출 처리
-            st.session_state.exam_submitted = True
-            st.session_state.page = "exam_score"
-            st.rerun()
+            with st.spinner("답안 제출 중..."):
+                st.session_state.exam_submitted = True
+                st.session_state.page = "exam_score"
+                st.rerun()
     
     # 대시보드로 돌아가기
-    if st.button("← 대시보드", use_container_width=True):
-        st.session_state.page = "student_dashboard"
-        st.rerun()
+    if st.button("← 대시보드로 돌아가기", use_container_width=True):
+        if st.session_state.student_answers:
+            # 작성 중인 답안이 있는 경우 확인
+            if st.button("정말 나가시겠습니까? 저장되지 않은 답안은 사라집니다.", key="confirm_exit"):
+                st.session_state.page = "student_dashboard"
+                st.rerun()
+        else:
+            st.session_state.page = "student_dashboard"
+            st.rerun()
 
 def my_performance_page():
     """학생 성적 분석 페이지"""
