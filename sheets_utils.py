@@ -59,46 +59,68 @@ def connect_to_sheets():
         # 서비스 계정 정보 확인 (직접 로드)
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         credentials = None
+        creds_source = None
         
-        # 서비스 계정 파일 확인
-        service_account_path = "service_account.json"
-        
-        if "GOOGLE_SERVICE_ACCOUNT_PATH" in st.secrets:
-            service_account_path = st.secrets["GOOGLE_SERVICE_ACCOUNT_PATH"]
-            print(f"서비스 계정 파일 경로: {service_account_path}")
-            
-        # 파일 존재 확인
-        if os.path.exists(service_account_path):
-            print(f"서비스 계정 파일을 찾았습니다: {service_account_path}")
-            try:
-                credentials = Credentials.from_service_account_file(
-                    service_account_path, scopes=scope
-                )
-                print("서비스 계정 파일로부터 credentials 객체를 생성했습니다.")
-            except Exception as e:
-                print(f"서비스 계정 파일 사용 오류: {str(e)}")
-                print(f"상세 오류: {traceback.format_exc()}")
-        # 서비스 계정 정보가 secrets.toml에 있는 경우
-        elif "gcp_service_account" in st.secrets:
+        # 1. 우선순위: secrets.toml에 있는 서비스 계정 정보
+        if "gcp_service_account" in st.secrets:
             print("서비스 계정 정보를 secrets.toml에서 찾았습니다.")
             try:
+                service_account_info = st.secrets["gcp_service_account"]
                 credentials = Credentials.from_service_account_info(
-                    st.secrets["gcp_service_account"], scope
+                    service_account_info, scopes=scope
                 )
+                creds_source = "secrets.toml"
                 print("secrets.toml의 서비스 계정 정보로 credentials 객체를 생성했습니다.")
             except Exception as e:
                 print(f"secrets.toml의 서비스 계정 정보 사용 오류: {str(e)}")
                 print(f"상세 오류: {traceback.format_exc()}")
-        else:
-            st.warning("서비스 계정 정보가 없습니다. 더미 시트를 사용합니다.")
-            print("서비스 계정 정보가 없습니다. 더미 시트를 사용합니다.")
-            return create_dummy_sheet()
         
+        # 2. 두번째 우선순위: service_account.json 파일
+        if credentials is None:
+            service_account_path = "service_account.json"
+            
+            if "GOOGLE_SERVICE_ACCOUNT_PATH" in st.secrets:
+                service_account_path = st.secrets["GOOGLE_SERVICE_ACCOUNT_PATH"]
+            
+            if os.path.exists(service_account_path):
+                print(f"서비스 계정 파일을 찾았습니다: {service_account_path}")
+                try:
+                    # 직접 JSON 파일을 읽어서 딕셔너리로 변환
+                    with open(service_account_path, 'r') as f:
+                        service_account_info = json.load(f)
+                    
+                    # 딕셔너리에서 credentials 생성
+                    credentials = Credentials.from_service_account_info(
+                        service_account_info, scopes=scope
+                    )
+                    creds_source = "service_account.json"
+                    print("서비스 계정 파일의 내용을 직접 로드하여 credentials 객체를 생성했습니다.")
+                except Exception as e:
+                    print(f"서비스 계정 파일 사용 오류: {str(e)}")
+                    print(f"상세 오류: {traceback.format_exc()}")
+
         # credentials 생성 성공 확인
         if credentials is None:
             st.warning("인증 정보 생성에 실패했습니다. 더미 시트를 사용합니다.")
             print("인증 정보 생성에 실패했습니다. 더미 시트를 사용합니다.")
             return create_dummy_sheet()
+        
+        # 서비스 계정 이메일 확인 및 표시 (공유 설정 도움을 위해)
+        service_account_email = None
+        if creds_source == "secrets.toml" and "client_email" in st.secrets["gcp_service_account"]:
+            service_account_email = st.secrets["gcp_service_account"]["client_email"]
+        elif creds_source == "service_account.json":
+            try:
+                with open(service_account_path, 'r') as f:
+                    sa_info = json.load(f)
+                    if "client_email" in sa_info:
+                        service_account_email = sa_info["client_email"]
+            except Exception as e:
+                print(f"서비스 계정 파일 읽기 오류: {str(e)}")
+        
+        if service_account_email:
+            print(f"서비스 계정 이메일: {service_account_email}")
+            print(f"이 이메일이 스프레드시트에 '편집자' 권한으로 공유되어 있어야 합니다.")
             
         # gspread 클라이언트 초기화 및 스프레드시트 열기
         try:
@@ -115,7 +137,24 @@ def connect_to_sheets():
                 # 필요한 워크시트 확인
                 worksheets = {ws.title: ws for ws in spreadsheet.worksheets()}
                 print(f"현재 워크시트 목록: {', '.join(worksheets.keys())}")
-                required_sheets = ["problems", "student_answers", "student_weaknesses", "students"]
+                
+                # 충돌 워크시트 정리
+                conflict_sheets = [ws for title, ws in worksheets.items() if "_conflict" in title]
+                if conflict_sheets:
+                    print(f"{len(conflict_sheets)}개의 충돌 워크시트를 발견했습니다. 정리합니다...")
+                    for ws in conflict_sheets:
+                        try:
+                            print(f"충돌 워크시트 '{ws.title}'를 삭제합니다.")
+                            spreadsheet.del_worksheet(ws)
+                            print(f"'{ws.title}' 워크시트를 삭제했습니다.")
+                        except Exception as e:
+                            print(f"워크시트 '{ws.title}' 삭제 중 오류: {str(e)}")
+                    
+                    # 업데이트된 워크시트 목록 가져오기
+                    worksheets = {ws.title: ws for ws in spreadsheet.worksheets()}
+                    print(f"정리 후 워크시트 목록: {', '.join(worksheets.keys())}")
+                
+                required_sheets = ["problems", "student_answers", "student_weaknesses", "students", "teachers"]
                 
                 # 필요한 워크시트가 없으면 생성
                 for sheet_name in required_sheets:
@@ -131,13 +170,38 @@ def connect_to_sheets():
                 
                 return spreadsheet
             except gspread.exceptions.SpreadsheetNotFound:
-                st.error(f"스프레드시트를 찾을 수 없습니다: {spreadsheet_id}")
-                print(f"스프레드시트를 찾을 수 없습니다: {spreadsheet_id}")
-                print("서비스 계정 이메일이 스프레드시트에 공유되어 있는지 확인하세요.")
+                error_msg = f"스프레드시트를 찾을 수 없습니다 (ID: {spreadsheet_id})"
+                st.error(error_msg)
+                print(error_msg)
+                if service_account_email:
+                    share_msg = f"서비스 계정 이메일({service_account_email})이 스프레드시트에 '편집자' 권한으로 공유되어 있는지 확인하세요."
+                    st.error(share_msg)
+                    print(share_msg)
+                return create_dummy_sheet()
+            except gspread.exceptions.APIError as api_err:
+                if "404" in str(api_err):
+                    error_msg = f"스프레드시트를 찾을 수 없습니다 (ID: {spreadsheet_id}). 올바른 ID인지 확인하세요."
+                    st.error(error_msg)
+                    print(error_msg)
+                elif "403" in str(api_err):
+                    error_msg = f"스프레드시트에 접근 권한이 없습니다 (ID: {spreadsheet_id})."
+                    st.error(error_msg)
+                    print(error_msg)
+                    if service_account_email:
+                        share_msg = f"서비스 계정 이메일({service_account_email})이 스프레드시트에 '편집자' 권한으로 공유되어 있는지 확인하세요."
+                        st.error(share_msg)
+                        print(share_msg)
+                else:
+                    error_msg = f"Google API 오류: {str(api_err)}"
+                    st.error(error_msg)
+                    print(error_msg)
+                    print(f"상세 오류: {traceback.format_exc()}")
+                return create_dummy_sheet()
             except Exception as e:
                 st.error(f"스프레드시트 열기 오류: {str(e)}")
                 print(f"스프레드시트 열기 오류: {str(e)}")
                 print(f"상세 오류: {traceback.format_exc()}")
+                return create_dummy_sheet()
         except Exception as e:
             st.error(f"Google Sheets API 인증 오류: {str(e)}")
             print(f"Google Sheets API 인증 오류: {str(e)}")
@@ -245,12 +309,45 @@ def get_worksheet_records(sheet, worksheet_name):
         return []
     
     try:
-        worksheet = sheet.worksheet(worksheet_name)
-        records = worksheet.get_all_records()
-        print(f"워크시트 '{worksheet_name}'에서 {len(records)}개의 레코드를 가져왔습니다.")
-        return records
+        # 시트 정보 출력
+        if hasattr(sheet, 'title'):
+            print(f"스프레드시트 '{sheet.title}'에서 '{worksheet_name}' 워크시트 데이터를 가져오는 중...")
+        
+        # 워크시트 존재 확인
+        try:
+            worksheet = sheet.worksheet(worksheet_name)
+        except Exception as e:
+            print(f"워크시트 '{worksheet_name}'를 찾을 수 없습니다: {str(e)}")
+            print(f"사용 가능한 워크시트: {[ws.title for ws in sheet.worksheets()]}")
+            return []
+        
+        # 데이터 가져오기
+        try:
+            # 헤더 확인
+            headers = worksheet.row_values(1)
+            print(f"워크시트 '{worksheet_name}' 헤더: {headers}")
+            
+            # 전체 레코드 가져오기
+            records = worksheet.get_all_records()
+            print(f"워크시트 '{worksheet_name}'에서 {len(records)}개의 레코드를 가져왔습니다.")
+            
+            # 레코드 유효성 확인
+            if records and len(records) > 0:
+                print(f"첫 번째 레코드 키: {list(records[0].keys()) if records[0] else 'No keys'}")
+                # 무작위 레코드 중 문제ID 출력해서 다양한 문제가 있는지 확인
+                if len(records) >= 3:
+                    sample_ids = [r.get("문제ID", "No ID") for r in random.sample(records, min(3, len(records)))]
+                    print(f"샘플 문제 ID: {sample_ids}")
+            
+            return records
+        except Exception as e:
+            print(f"워크시트 '{worksheet_name}'에서 데이터를 가져오는 중 오류: {str(e)}")
+            traceback.print_exc()  # 상세 오류 정보 출력
+            return []
+            
     except Exception as e:
-        print(f"워크시트 '{worksheet_name}' 데이터 불러오기 실패: {str(e)}")
+        print(f"워크시트 데이터 불러오기 실패: {str(e)}")
+        traceback.print_exc()  # 상세 오류 정보 출력
         # 에러 발생 시 빈 목록 반환
         return []
 
@@ -403,83 +500,513 @@ def get_dummy_problem(student_grade=None):
     if not student_grade:
         student_grade = "중1"  # 기본값
     
-    # 학년에 따른 문제 설정
-    if "중1" in student_grade:
-        question = "Pick the correct word to complete the sentence: A student ___ to school."
-        options = {
-            "보기1": "go",
-            "보기2": "goes",
-            "보기3": "going",
-            "보기4": "went"
-        }
-        answer = "보기2"
-        explanation = "'A student'는 3인칭 단수이므로 동사에 -s를 붙여 'goes'가 됩니다."
-    elif "중2" in student_grade:
-        question = "Choose the correct past tense: Yesterday, I ___ to the store."
-        options = {
-            "보기1": "go",
-            "보기2": "goes",
-            "보기3": "going",
-            "보기4": "went"
-        }
-        answer = "보기4"
-        explanation = "과거 시제를 나타내는 'Yesterday'가 있으므로 go의 과거형인 'went'를 사용합니다."
-    elif "중3" in student_grade:
-        question = "Select the correct passive form: The book ___ by the student."
-        options = {
-            "보기1": "read",
-            "보기2": "reads",
-            "보기3": "is read",
-            "보기4": "reading"
-        }
-        answer = "보기3"
-        explanation = "수동태는 'be동사 + 과거분사'의 형태입니다. 따라서 'is read'가 정답입니다."
-    elif "고1" in student_grade:
-        question = "Choose the correct comparative: This book is ___ than that one."
-        options = {
-            "보기1": "interesting",
-            "보기2": "more interesting",
-            "보기3": "most interesting",
-            "보기4": "interestingly"
-        }
-        answer = "보기2"
-        explanation = "두 개를 비교할 때는 비교급을 사용합니다. 긴 형용사는 'more + 원급'으로 비교급을 만듭니다."
-    elif "고2" in student_grade:
-        question = "Select the correct present perfect: She ___ in Korea for five years."
-        options = {
-            "보기1": "live",
-            "보기2": "lives",
-            "보기3": "living",
-            "보기4": "has lived"
-        }
-        answer = "보기4"
-        explanation = "현재완료는 'have/has + 과거분사'의 형태로, 과거부터 현재까지 지속되는 상황을 나타냅니다."
-    else:  # 고3 또는 기타
-        question = "Choose the correct conditional: If I ___ rich, I would buy a new car."
-        options = {
-            "보기1": "am",
-            "보기2": "was",
-            "보기3": "were",
-            "보기4": "being"
-        }
-        answer = "보기3"
-        explanation = "가정법 과거에서는 if절에 'were'를 사용합니다. 'If I were...'는 현재 사실과 반대되는 상황을 가정할 때 씁니다."
+    # 여러 문제 옵션 제공 - 무작위로 선택되도록 함
+    problems = {
+        "중1": [
+            {
+                "question": "Pick the correct word to complete the sentence: A student ___ to school.",
+                "options": {
+                    "보기1": "go",
+                    "보기2": "goes",
+                    "보기3": "going",
+                    "보기4": "went"
+                },
+                "answer": "보기2",
+                "explanation": "'A student'는 3인칭 단수이므로 동사에 -s를 붙여 'goes'가 됩니다."
+            },
+            {
+                "question": "Choose the correct word: She ___ English very well.",
+                "options": {
+                    "보기1": "speak",
+                    "보기2": "speaks",
+                    "보기3": "speaking",
+                    "보기4": "spoke"
+                },
+                "answer": "보기2",
+                "explanation": "3인칭 단수 주어는 동사에 -s를 붙입니다."
+            },
+            {
+                "question": "Select the correct answer: My brother ___ soccer every weekend.",
+                "options": {
+                    "보기1": "play",
+                    "보기2": "plays",
+                    "보기3": "playing",
+                    "보기4": "played"
+                },
+                "answer": "보기2",
+                "explanation": "규칙적인 현재 습관을 나타내는 현재 시제입니다."
+            },
+            {
+                "question": "Which word is a proper noun?",
+                "options": {
+                    "보기1": "book",
+                    "보기2": "London",
+                    "보기3": "teacher",
+                    "보기4": "computer"
+                },
+                "answer": "보기2",
+                "explanation": "고유명사는 특정 인물, 장소, 사물의 이름을 나타냅니다. London은 도시 이름으로 고유명사입니다."
+            },
+            {
+                "question": "Find the plural form: One child, two ___.",
+                "options": {
+                    "보기1": "childs",
+                    "보기2": "childes",
+                    "보기3": "children",
+                    "보기4": "child"
+                },
+                "answer": "보기3",
+                "explanation": "'child'의 복수형은 불규칙 복수형으로 'children'입니다."
+            },
+            {
+                "question": "Choose the correct preposition: The book is ___ the table.",
+                "options": {
+                    "보기1": "on",
+                    "보기2": "in",
+                    "보기3": "at",
+                    "보기4": "by"
+                },
+                "answer": "보기1",
+                "explanation": "물체가 표면 위에 있을 때는 전치사 'on'을 사용합니다."
+            },
+            {
+                "question": "What time is it? It's ___.",
+                "options": {
+                    "보기1": "half to nine",
+                    "보기2": "half past eight",
+                    "보기3": "half eight",
+                    "보기4": "eight and half"
+                },
+                "answer": "보기2",
+                "explanation": "8시 30분을 나타낼 때는 'half past eight'이라고 합니다."
+            }
+        ],
+        "중2": [
+            {
+                "question": "Choose the correct past tense: Yesterday, I ___ to the store.",
+                "options": {
+                    "보기1": "go",
+                    "보기2": "goes",
+                    "보기3": "going",
+                    "보기4": "went"
+                },
+                "answer": "보기4",
+                "explanation": "과거 시제를 나타내는 'Yesterday'가 있으므로 go의 과거형인 'went'를 사용합니다."
+            },
+            {
+                "question": "Complete the sentence: Last week, she ___ a new car.",
+                "options": {
+                    "보기1": "buy",
+                    "보기2": "buys",
+                    "보기3": "buying",
+                    "보기4": "bought"
+                },
+                "answer": "보기4",
+                "explanation": "'Last week'은 과거 시제를 나타내므로 'bought'를 사용합니다."
+            },
+            {
+                "question": "Choose the correct form: They ___ to music last night.",
+                "options": {
+                    "보기1": "listen",
+                    "보기2": "listens",
+                    "보기3": "listening",
+                    "보기4": "listened"
+                },
+                "answer": "보기4",
+                "explanation": "'Last night'은 과거를 나타내므로 과거형 'listened'를 사용합니다."
+            },
+            {
+                "question": "Choose the correct future tense: Next year, I ___ to college.",
+                "options": {
+                    "보기1": "go",
+                    "보기2": "goes",
+                    "보기3": "will go",
+                    "보기4": "went"
+                },
+                "answer": "보기3",
+                "explanation": "미래를 나타내는 'Next year'가 있으므로 'will go'를 사용합니다."
+            },
+            {
+                "question": "Which sentence uses the correct article?",
+                "options": {
+                    "보기1": "He is a university student.",
+                    "보기2": "He is an university student.",
+                    "보기3": "He is the university student.",
+                    "보기4": "He is university student."
+                },
+                "answer": "보기1",
+                "explanation": "'university'는 /juː/로 시작하는 자음 소리이므로 'a'를 사용합니다."
+            },
+            {
+                "question": "Select the sentence with the correct order of adjectives.",
+                "options": {
+                    "보기1": "I bought a leather black expensive bag.",
+                    "보기2": "I bought an expensive black leather bag.",
+                    "보기3": "I bought a black expensive leather bag.",
+                    "보기4": "I bought an leather expensive black bag."
+                },
+                "answer": "보기2",
+                "explanation": "형용사 순서는 의견-크기-나이-모양-색깔-출신-재료 순입니다. 따라서 'expensive(의견) black(색깔) leather(재료)'가 올바른 순서입니다."
+            },
+            {
+                "question": "Choose the sentence with the correct adverb placement.",
+                "options": {
+                    "보기1": "She quickly finished her homework.",
+                    "보기2": "She finished quickly her homework.",
+                    "보기3": "She finished her quickly homework.",
+                    "보기4": "She finished her homework quickly."
+                },
+                "answer": "보기1",
+                "explanation": "방법을 나타내는 부사는 주로 동사 앞이나 문장 끝에 위치합니다. 'quickly'는 'finished' 앞에 올 수 있습니다."
+            }
+        ],
+        "중3": [
+            {
+                "question": "Select the correct passive form: The book ___ by the student.",
+                "options": {
+                    "보기1": "read",
+                    "보기2": "reads",
+                    "보기3": "is read",
+                    "보기4": "reading"
+                },
+                "answer": "보기3",
+                "explanation": "수동태는 'be동사 + 과거분사'의 형태입니다. 따라서 'is read'가 정답입니다."
+            },
+            {
+                "question": "Choose the passive voice: The letter ___ yesterday.",
+                "options": {
+                    "보기1": "wrote",
+                    "보기2": "writes",
+                    "보기3": "was written",
+                    "보기4": "is writing"
+                },
+                "answer": "보기3",
+                "explanation": "과거 수동태는 'was/were + 과거분사' 형태입니다."
+            },
+            {
+                "question": "Select the passive form: This building ___ in 1960.",
+                "options": {
+                    "보기1": "built",
+                    "보기2": "builds",
+                    "보기3": "was built",
+                    "보기4": "is building"
+                },
+                "answer": "보기3",
+                "explanation": "과거에 완료된 행동의 수동태는 'was built'입니다."
+            },
+            {
+                "question": "Choose the correct question tag: You like pizza, ___?",
+                "options": {
+                    "보기1": "do you",
+                    "보기2": "don't you",
+                    "보기3": "are you",
+                    "보기4": "did you"
+                },
+                "answer": "보기2",
+                "explanation": "긍정문 뒤에는 부정형 의문태그가 붙습니다."
+            },
+            {
+                "question": "Select the correct relative pronoun: The man ___ lives next door is a doctor.",
+                "options": {
+                    "보기1": "who",
+                    "보기2": "which",
+                    "보기3": "whose",
+                    "보기4": "whom"
+                },
+                "answer": "보기1",
+                "explanation": "사람을 지칭하는 주격 관계대명사는 'who'입니다."
+            },
+            {
+                "question": "Choose the correct reported speech: She said, 'I am happy.'",
+                "options": {
+                    "보기1": "She said I am happy.",
+                    "보기2": "She said she is happy.",
+                    "보기3": "She said she was happy.",
+                    "보기4": "She said I was happy."
+                },
+                "answer": "보기3",
+                "explanation": "직접화법이 간접화법으로 바뀔 때 시제가 과거로 바뀝니다. 'am'은 'was'로 변경됩니다."
+            },
+            {
+                "question": "Select the correct gerund usage:",
+                "options": {
+                    "보기1": "I enjoy to swim in the ocean.",
+                    "보기2": "I enjoy swimming in the ocean.",
+                    "보기3": "I enjoy swim in the ocean.",
+                    "보기4": "I enjoy swam in the ocean."
+                },
+                "answer": "보기2",
+                "explanation": "'enjoy'는 동명사를 목적어로 취하는 동사입니다. 따라서 'swimming'이 올바른 형태입니다."
+            }
+        ],
+        "고1": [
+            {
+                "question": "Choose the correct comparative: This book is ___ than that one.",
+                "options": {
+                    "보기1": "interesting",
+                    "보기2": "more interesting",
+                    "보기3": "most interesting",
+                    "보기4": "interestingly"
+                },
+                "answer": "보기2",
+                "explanation": "두 개를 비교할 때는 비교급을 사용합니다. 긴 형용사는 'more + 원급'으로 비교급을 만듭니다."
+            },
+            {
+                "question": "Select the comparative form: This problem is ___ than I thought.",
+                "options": {
+                    "보기1": "difficult",
+                    "보기2": "more difficult",
+                    "보기3": "most difficult",
+                    "보기4": "difficultly"
+                },
+                "answer": "보기2",
+                "explanation": "비교급은 'more + 형용사' 형태로 만듭니다."
+            },
+            {
+                "question": "Choose the correct form: She runs ___ than her brother.",
+                "options": {
+                    "보기1": "fast",
+                    "보기2": "faster",
+                    "보기3": "fastest",
+                    "보기4": "more fast"
+                },
+                "answer": "보기2",
+                "explanation": "짧은 형용사의 비교급은 '-er'을 붙여 만듭니다."
+            },
+            {
+                "question": "Select the correct superlative: This is ___ building in the city.",
+                "options": {
+                    "보기1": "tall",
+                    "보기2": "taller",
+                    "보기3": "tallest",
+                    "보기4": "the tallest"
+                },
+                "answer": "보기4",
+                "explanation": "최상급은 'the + 형용사est' 형태로 만듭니다."
+            },
+            {
+                "question": "Choose the correct countable/uncountable usage:",
+                "options": {
+                    "보기1": "There are many informations in this book.",
+                    "보기2": "There is much information in this book.",
+                    "보기3": "There are much informations in this book.",
+                    "보기4": "There is many information in this book."
+                },
+                "answer": "보기2",
+                "explanation": "'information'은 불가산명사로 단수 취급하며, 불가산명사는 'much'와 함께 사용합니다."
+            },
+            {
+                "question": "Select the sentence with correct parallel structure:",
+                "options": {
+                    "보기1": "She likes swimming, running, and to ride bikes.",
+                    "보기2": "She likes swimming, running, and riding bikes.",
+                    "보기3": "She likes to swim, to run, and riding bikes.",
+                    "보기4": "She likes to swim, running, and to ride bikes."
+                },
+                "answer": "보기2",
+                "explanation": "병렬 구조에서는 같은 문법 형태를 유지해야 합니다. 'swimming, running, riding' 모두 동명사 형태입니다."
+            },
+            {
+                "question": "Choose the phrase that correctly completes: Despite ___.",
+                "options": {
+                    "보기1": "it was raining",
+                    "보기2": "it is raining",
+                    "보기3": "the rain",
+                    "보기4": "is raining"
+                },
+                "answer": "보기3",
+                "explanation": "'Despite'는 전치사이므로 뒤에 명사나 동명사가 와야 합니다."
+            }
+        ],
+        "고2": [
+            {
+                "question": "Select the correct present perfect: She ___ in Korea for five years.",
+                "options": {
+                    "보기1": "live",
+                    "보기2": "lives",
+                    "보기3": "living",
+                    "보기4": "has lived"
+                },
+                "answer": "보기4",
+                "explanation": "현재완료는 'have/has + 과거분사'의 형태로, 과거부터 현재까지 지속되는 상황을 나타냅니다."
+            },
+            {
+                "question": "Choose the present perfect: I ___ this book three times.",
+                "options": {
+                    "보기1": "read",
+                    "보기2": "reads",
+                    "보기3": "have read",
+                    "보기4": "reading"
+                },
+                "answer": "보기3",
+                "explanation": "경험을 나타내는 현재완료는 'have + 과거분사' 형태입니다."
+            },
+            {
+                "question": "Select the correct form: We ___ each other since childhood.",
+                "options": {
+                    "보기1": "know",
+                    "보기2": "knows",
+                    "보기3": "have known",
+                    "보기4": "knew"
+                },
+                "answer": "보기3",
+                "explanation": "'since childhood'는 과거부터 현재까지 계속되는 상황을 나타내므로 현재완료를 사용합니다."
+            },
+            {
+                "question": "Choose the correct usage of past perfect:",
+                "options": {
+                    "보기1": "When I arrived, the train left.",
+                    "보기2": "When I arrived, the train has left.",
+                    "보기3": "When I arrived, the train had left.",
+                    "보기4": "When I arrived, the train was leaving."
+                },
+                "answer": "보기3",
+                "explanation": "과거완료는 과거의 어떤 시점보다 더 이전에 일어난 일을 표현할 때 사용합니다."
+            },
+            {
+                "question": "Select the correct infinitive use:",
+                "options": {
+                    "보기1": "I want learning English.",
+                    "보기2": "I want learn English.",
+                    "보기3": "I want to learning English.",
+                    "보기4": "I want to learn English."
+                },
+                "answer": "보기4",
+                "explanation": "'want'는 to부정사를 목적어로 취하는 동사입니다."
+            },
+            {
+                "question": "Choose the sentence with a participial phrase:",
+                "options": {
+                    "보기1": "The girl is singing a song.",
+                    "보기2": "Walking in the park, I saw an old friend.",
+                    "보기3": "She walks to school every day.",
+                    "보기4": "They want to see the movie."
+                },
+                "answer": "보기2",
+                "explanation": "'Walking in the park'는 분사구문으로, 주절의 주어와 같은 주어가 동작을 수행하는 상황을 나타냅니다."
+            },
+            {
+                "question": "Select the sentence with a correct subjunctive mood:",
+                "options": {
+                    "보기1": "I suggest that he goes to the doctor.",
+                    "보기2": "I suggest that he go to the doctor.",
+                    "보기3": "I suggest that he went to the doctor.",
+                    "보기4": "I suggest that he would go to the doctor."
+                },
+                "answer": "보기2",
+                "explanation": "가정법에서 'suggest that' 다음에는 동사 원형을 사용합니다."
+            }
+        ],
+        "고3": [
+            {
+                "question": "Choose the correct conditional: If I ___ rich, I would buy a new car.",
+                "options": {
+                    "보기1": "am",
+                    "보기2": "was",
+                    "보기3": "were",
+                    "보기4": "being"
+                },
+                "answer": "보기3",
+                "explanation": "가정법 과거에서는 if절에 'were'를 사용합니다. 'If I were...'는 현재 사실과 반대되는 상황을 가정할 때 씁니다."
+            },
+            {
+                "question": "Select the correct form: If it ___ tomorrow, we will cancel the picnic.",
+                "options": {
+                    "보기1": "rain",
+                    "보기2": "rains",
+                    "보기3": "rained",
+                    "보기4": "raining"
+                },
+                "answer": "보기2",
+                "explanation": "조건절(if)에서 미래의 가능성을 나타낼 때는 현재시제를 씁니다."
+            },
+            {
+                "question": "Choose the correct form: I wish I ___ how to speak Spanish.",
+                "options": {
+                    "보기1": "know",
+                    "보기2": "knows",
+                    "보기3": "knew",
+                    "보기4": "known"
+                },
+                "answer": "보기3",
+                "explanation": "'I wish'는 현재 사실과 반대되는 상황을 가정할 때 과거형을 사용합니다."
+            },
+            {
+                "question": "Select the correct usage of inversion:",
+                "options": {
+                    "보기1": "Never I have seen such a beautiful sunset.",
+                    "보기2": "Never have I seen such a beautiful sunset.",
+                    "보기3": "I have never seen such a beautiful sunset.",
+                    "보기4": "I never have seen such a beautiful sunset."
+                },
+                "answer": "보기2",
+                "explanation": "부정어 'never'가 문장 앞에 오면 주어와 조동사가 도치됩니다."
+            },
+            {
+                "question": "Choose the correct cleft sentence:",
+                "options": {
+                    "보기1": "The book I bought yesterday.",
+                    "보기2": "It is the book that I bought yesterday.",
+                    "보기3": "I bought the book yesterday.",
+                    "보기4": "The book is what I bought yesterday."
+                },
+                "answer": "보기2",
+                "explanation": "강조구문은 'It is/was + 강조하는 말 + that' 형태를 사용합니다."
+            },
+            {
+                "question": "Select the correct sentence with a complex structure:",
+                "options": {
+                    "보기1": "He is tall and handsome.",
+                    "보기2": "Although he studied hard, he failed the exam.",
+                    "보기3": "She likes coffee, tea, and juice.",
+                    "보기4": "They went to the park and played soccer."
+                },
+                "answer": "보기2",
+                "explanation": "복합문은 주절과 종속절을 포함합니다. 'Although he studied hard'는 종속절입니다."
+            },
+            {
+                "question": "Choose the sentence with correct modality:",
+                "options": {
+                    "보기1": "You need study harder.",
+                    "보기2": "You must to study harder.",
+                    "보기3": "You should studying harder.",
+                    "보기4": "You ought to study harder."
+                },
+                "answer": "보기4",
+                "explanation": "'ought to' 다음에는 동사 원형이 와야 합니다."
+            }
+        ]
+    }
+    
+    # 학년 확인 및 기본값 설정
+    grade_key = "중1"  # 기본값
+    for key in problems.keys():
+        if key in student_grade:
+            grade_key = key
+            break
+    
+    # 해당 학년에서 무작위로 문제 선택
+    grade_problems = problems.get(grade_key, problems["중1"])
+    problem_data = random.choice(grade_problems)
+    
+    # 더미 문제 ID 생성 (유니크한 값 보장)
+    dummy_id = f"dummy-{uuid.uuid4()}"
     
     # 더미 문제 데이터 구성
     dummy_problem = {
-        "문제ID": f"dummy-{int(time.time())}",
+        "문제ID": dummy_id,
         "과목": "영어",
         "학년": student_grade,
         "문제유형": "객관식",
         "난이도": "중",
-        "문제내용": question,
-        "정답": answer,
-        "해설": explanation,
-        "보기정보": options
+        "문제내용": problem_data["question"],
+        "정답": problem_data["answer"],
+        "해설": problem_data["explanation"],
+        "보기정보": problem_data["options"]
     }
     
     # 보기 항목 추가
-    for key, value in options.items():
+    for key, value in problem_data["options"].items():
         dummy_problem[key] = value
     
     return dummy_problem
@@ -677,3 +1204,42 @@ def save_exam_result(student_id, student_name, student_grade, results):
     except Exception as e:
         print(f"시험 결과 저장 중 오류: {str(e)}")
         return False
+
+def generate_dummy_problems(student_grade, count=20):
+    """학생 학년에 맞는 더미 문제를 여러 개 생성합니다."""
+    problems = []
+    
+    # 이미 선택된 문제 추적 (중복 방지)
+    selected_questions = set()
+    
+    for i in range(count):
+        # 중복을 피해 문제 선택
+        attempts = 0
+        max_attempts = 10  # 최대 시도 횟수
+        
+        dummy_problem = None
+        while attempts < max_attempts and (dummy_problem is None or dummy_problem["문제내용"] in selected_questions):
+            dummy_problem = get_dummy_problem(student_grade)
+            attempts += 1
+        
+        # 중복이 아니면 추가
+        if dummy_problem["문제내용"] not in selected_questions:
+            selected_questions.add(dummy_problem["문제내용"])
+            problems.append(dummy_problem)
+        
+        # 중복이 계속 발생하면 약간 변형하여 추가
+        else:
+            dummy_problem["문제내용"] = f"{dummy_problem['문제내용']} (문제 {i+1})"
+            selected_questions.add(dummy_problem["문제내용"])
+            problems.append(dummy_problem)
+    
+    # 모든 문제가 생성되었는지 확인
+    if len(problems) < count:
+        print(f"경고: {count}개 문제 중 {len(problems)}개만 생성되었습니다. 중복 문제가 있을 수 있습니다.")
+        # 부족한 문제 추가 생성
+        for i in range(len(problems), count):
+            dummy_problem = get_dummy_problem(student_grade)
+            dummy_problem["문제내용"] = f"{dummy_problem['문제내용']} (추가 문제 {i+1})"
+            problems.append(dummy_problem)
+    
+    return problems

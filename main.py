@@ -25,6 +25,27 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
+# 충돌 워크시트 정리 함수 추가
+def cleanup_conflict_worksheets(sheet):
+    """충돌 워크시트를 정리합니다."""
+    try:
+        # 워크시트 목록 가져오기
+        worksheets = sheet.worksheets()
+        
+        # 충돌 워크시트 찾기
+        conflict_sheets = [ws for ws in worksheets if "_conflict" in ws.title]
+        
+        # 충돌 워크시트 삭제
+        for ws in conflict_sheets:
+            print(f"충돌 워크시트 '{ws.title}'를 삭제합니다.")
+            sheet.del_worksheet(ws)
+            print(f"'{ws.title}' 워크시트를 삭제했습니다.")
+            
+        return True
+    except Exception as e:
+        print(f"충돌 워크시트 정리 중 오류 발생: {str(e)}")
+        return False
+
 # 모듈 임포트
 try:
     from sheets_utils import connect_to_sheets, get_random_problem, save_student_answer, get_worksheet_records
@@ -51,6 +72,19 @@ try:
 except Exception as e:
     # 이미 streamlit이 임포트되어 있으므로 중복 임포트 제거
     st.error(f"모듈 임포트 오류: {str(e)}")
+    
+# Google Sheets 연결 및 충돌 워크시트 정리
+try:
+    sheet = connect_to_sheets()
+    if sheet:
+        # 충돌 워크시트 정리
+        cleanup_result = cleanup_conflict_worksheets(sheet)
+        if cleanup_result:
+            print("충돌 워크시트 정리가 완료되었습니다.")
+        else:
+            print("충돌 워크시트 정리 중 문제가 발생했습니다.")
+except Exception as e:
+    print(f"Google Sheets 연결 또는 워크시트 정리 중 오류 발생: {str(e)}")
 
 # GEMINI API 초기화
 try:
@@ -131,7 +165,7 @@ def check_api_connections():
         status["google_sheets"] = True
         
     except Exception as e:
-        status["error_messages"].append(f"Google Sheets 연결 확인 중 오류: {str(e)}")
+        status["error_messages"].append(f"Google Sheets 연결 확인 중 오류 발생: {str(e)}")
     
     return status
 
@@ -343,12 +377,23 @@ def student_dashboard():
     
     with col1:
         if st.button("📝 문제 풀기 (20문제 시험)", use_container_width=True):
-            # 문제 풀기 세션 완전 초기화
-            for key in list(st.session_state.keys()):
-                if key.startswith("exam_") or key in ["student_answers", "used_problem_ids", "all_problems_loaded", 
-                                                     "problem_count", "max_problems", "start_time", "time_limit"]:
-                    if key in st.session_state:
-                        del st.session_state[key]
+            # 완전히 모든 시험 관련 상태 초기화
+            keys_to_delete = []
+            for key in st.session_state.keys():
+                if key.startswith("exam_") or key.startswith("used_problem_ids_") or key in [
+                    "student_answers", "all_problems_loaded", "problem_count", 
+                    "max_problems", "start_time", "time_limit"]:
+                    keys_to_delete.append(key)
+            
+            # 세션에서 안전하게 키 삭제
+            for key in keys_to_delete:
+                if key in st.session_state:
+                    del st.session_state[key]
+            
+            # 학생별 사용된 문제 ID 초기화
+            student_key = f"used_problem_ids_{st.session_state.student_id}"
+            if student_key in st.session_state:
+                del st.session_state[student_key]
             
             # 기본값 설정
             st.session_state.problem_count = 0
@@ -356,20 +401,8 @@ def student_dashboard():
             st.session_state.start_time = time.time()
             st.session_state.time_limit = 50 * 60  # 50분(초 단위)
             st.session_state.student_answers = {}
-            st.session_state.used_problem_ids = set()  # 사용된 문제 ID 추적
             
-            # 시험 관련 상태 초기화
-            if 'exam_initialized' in st.session_state:
-                del st.session_state.exam_initialized
-            if 'exam_problems' in st.session_state:
-                del st.session_state.exam_problems
-            if 'exam_submitted' in st.session_state:
-                del st.session_state.exam_submitted
-            if 'exam_results' in st.session_state:
-                del st.session_state.exam_results
-            if 'feedback_data' in st.session_state:
-                del st.session_state.feedback_data
-                
+            # 시험 페이지로 전환
             st.session_state.all_problems_loaded = False
             st.session_state.page = "exam_page"
             
@@ -430,24 +463,34 @@ def normalize_grade(grade_str):
 
 def generate_dummy_problems(student_grade, count=20):
     """학생 학년에 맞는 더미 문제를 여러 개 생성합니다."""
-    from sheets_utils import get_dummy_problem
-    problems = []
-    for i in range(count):
-        dummy_problem = get_dummy_problem(student_grade)
-        dummy_problem["문제ID"] = f"dummy-{uuid.uuid4()}"  # 고유 ID 생성
-        problems.append(dummy_problem)
-    return problems
+    from sheets_utils import generate_dummy_problems as get_diverse_dummy_problems
+    try:
+        # 새로 구현된 더 다양한 더미 문제 생성 함수 사용
+        return get_diverse_dummy_problems(student_grade, count)
+    except Exception as e:
+        # 오류 발생시 기존 방식으로 대체
+        st.error(f"다양한 더미 문제 생성 중 오류: {str(e)}")
+        from sheets_utils import get_dummy_problem
+        problems = []
+        for i in range(count):
+            dummy_problem = get_dummy_problem(student_grade)
+            dummy_problem["문제ID"] = f"dummy-{uuid.uuid4()}"  # 고유 ID 생성
+            problems.append(dummy_problem)
+        return problems
 
 def load_exam_problems(student_id, student_grade, problem_count=20):
     """학생 학년에 맞는 시험 문제를 불러옵니다"""
-    if 'used_problem_ids' not in st.session_state:
-        st.session_state.used_problem_ids = set()
+    # 학생별 사용된 문제 ID 관리를 위한 세션 상태 초기화
+    student_key = f"used_problem_ids_{student_id}"
+    if student_key not in st.session_state:
+        st.session_state[student_key] = set()
     
     attempts = 0
     max_attempts = 50  # 무한 루프 방지
     
     # 학년 정규화
     normalized_student_grade = normalize_grade(student_grade)
+    print(f"정규화된 학년: {normalized_student_grade}")
     
     try:
         # 구글 시트에 연결
@@ -461,6 +504,8 @@ def load_exam_problems(student_id, student_grade, problem_count=20):
         if not all_problems:
             st.warning("문제를 불러올 수 없습니다. 더미 문제를 사용합니다.")
             return generate_dummy_problems(student_grade, problem_count)
+        
+        print(f"총 {len(all_problems)}개의 문제를 불러왔습니다.")
         
         # 학년에 맞는 문제 필터링
         filtered_problems = []
@@ -477,9 +522,14 @@ def load_exam_problems(student_id, student_grade, problem_count=20):
                     is_valid = False
                     break
             
-            # 학년 확인 (정규화된 학년으로 비교)
-            problem_grade = normalize_grade(p.get("학년", ""))
-            if problem_grade != normalized_student_grade:
+            # 학년 확인 (정규화된 학년과 일치 또는 포함 관계 확인)
+            problem_grade = p.get("학년", "")
+            problem_grade_norm = normalize_grade(problem_grade)
+            
+            # 학년 필터링 수정: 정확히 일치하지 않아도 포함관계도 허용
+            if not (problem_grade_norm == normalized_student_grade or 
+                   normalized_student_grade in problem_grade or 
+                   problem_grade in normalized_student_grade):
                 is_valid = False
             
             # 문제 유형별 추가 유효성 검사
@@ -508,8 +558,8 @@ def load_exam_problems(student_id, student_grade, problem_count=20):
                 if not p.get("정답", "").strip():
                     is_valid = False
             
-            # 이미 사용된 ID 제외
-            if p["문제ID"] in st.session_state.used_problem_ids:
+            # 이미 사용된 ID 제외 - 학생별로 추적
+            if p["문제ID"] in st.session_state[student_key]:
                 is_valid = False
             
             if is_valid:
@@ -550,7 +600,7 @@ def load_exam_problems(student_id, student_grade, problem_count=20):
             # 각 유형에서 1문제 선택
             selected = random.choice(type_problems)
             selected_problems.append(selected)
-            st.session_state.used_problem_ids.add(selected["문제ID"])
+            st.session_state[student_key].add(selected["문제ID"])
             
             # 선택된 문제는 제외
             type_problems.remove(selected)
@@ -579,17 +629,17 @@ def load_exam_problems(student_id, student_grade, problem_count=20):
                         if type_problems and remaining_count > 0:
                             selected = random.choice(type_problems)
                             selected_problems.append(selected)
-                            st.session_state.used_problem_ids.add(selected["문제ID"])
+                            st.session_state[student_key].add(selected["문제ID"])
                             type_problems.remove(selected)
                             remaining_count -= 1
         
         # 여전히 부족하다면 남은 문제들 중에서 무작위로 선택
-        remaining_problems = [p for p in filtered_problems if p["문제ID"] not in st.session_state.used_problem_ids]
+        remaining_problems = [p for p in filtered_problems if p["문제ID"] not in st.session_state[student_key]]
         
         while remaining_count > 0 and remaining_problems and attempts < max_attempts:
             selected = random.choice(remaining_problems)
             selected_problems.append(selected)
-            st.session_state.used_problem_ids.add(selected["문제ID"])
+            st.session_state[student_key].add(selected["문제ID"])
             remaining_problems.remove(selected)
             remaining_count -= 1
             attempts += 1
@@ -602,7 +652,7 @@ def load_exam_problems(student_id, student_grade, problem_count=20):
             # 더미 문제 ID 추적
             for p in dummy_problems:
                 if "문제ID" in p:
-                    st.session_state.used_problem_ids.add(p["문제ID"])
+                    st.session_state[student_key].add(p["문제ID"])
         
         # 선택된 문제 목록을 무작위로 섞기
         random.shuffle(selected_problems)
@@ -683,6 +733,11 @@ def exam_page():
             st.session_state.exam_problems = None  # 이미 로드된 문제가 있으면 초기화
             st.session_state.exam_answered_count = 0
             st.session_state.exam_start_time = time.time()
+            
+            # 학생별 사용된 문제 초기화 - 매번 시험을 새로 볼 때마다 초기화
+            student_key = f"used_problem_ids_{st.session_state.student_id}"
+            if student_key in st.session_state:
+                del st.session_state[student_key]
             
             # 시험 문제 로드
             try:
