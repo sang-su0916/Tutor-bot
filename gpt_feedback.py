@@ -99,7 +99,7 @@ def generate_feedback(question, student_answer, correct_answer, explanation):
                 request_timeout=30
             )
             
-            # 응답 파싱 - 0.28 버전은 'message'가 아닌 message 키를 사용함
+            # 응답 파싱 - 0.28 버전 호환성 수정
             output = response.choices[0].message.content.strip()
         except Exception as api_error:
             # API 호출 실패 시 기본 응답 생성
