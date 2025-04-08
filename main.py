@@ -93,16 +93,32 @@ def check_api_connections():
     
     # Google Sheets API 연결 확인
     try:
-        sheet = connect_to_sheets()
-        if sheet:
-            # 테스트 워크시트 접근 시도
-            try:
-                sheet.worksheet("students")
-                status["google_sheets"] = True
-            except Exception as e:
-                status["error_messages"].append(f"Google Sheets 워크시트 접근 오류: {str(e)}")
+        if "gcp_service_account" not in st.secrets or "spreadsheet_id" not in st.secrets:
+            st.error("구글 스프레드시트 설정이 누락되었습니다. .streamlit/secrets.toml 파일을 확인하세요.")
+            status["error_messages"].append("Google Sheets 설정 누락: gcp_service_account 또는 spreadsheet_id가 없습니다.")
         else:
-            status["error_messages"].append("Google Sheets 연결 실패")
+            # 서비스 계정 정보 확인
+            service_account_info = st.secrets["gcp_service_account"]
+            required_fields = ["type", "project_id", "private_key_id", "private_key", "client_email", "client_id"]
+            missing_fields = [field for field in required_fields if field not in service_account_info]
+            
+            if missing_fields:
+                missing_fields_str = ", ".join(missing_fields)
+                status["error_messages"].append(f"서비스 계정 정보 누락: {missing_fields_str}")
+            else:
+                # 연결 시도
+                sheet = connect_to_sheets()
+                if sheet:
+                    # 테스트 워크시트 접근 시도
+                    try:
+                        worksheets = sheet.worksheets()
+                        if worksheets:
+                            status["google_sheets"] = True
+                            print(f"구글 스프레드시트에 성공적으로 연결되었습니다. 워크시트: {[ws.title for ws in worksheets]}")
+                    except Exception as e:
+                        status["error_messages"].append(f"Google Sheets 워크시트 접근 오류: {str(e)}")
+                else:
+                    status["error_messages"].append("Google Sheets 연결 실패")
     except Exception as e:
         status["error_messages"].append(f"Google Sheets 연결 오류: {str(e)}")
     
@@ -155,8 +171,8 @@ def intro_page():
     st.title("GPT 학습 피드백 시스템")
     st.markdown("#### 우리 학원 전용 AI 튜터")
     
-    # API 연결 상태 확인 (옵션)
-    with st.expander("API 연결 상태"):
+    # API 연결 상태 확인 및 자세한 정보 표시
+    with st.expander("API 연결 상태", expanded=True):
         try:
             api_status = check_api_connections()
             
@@ -177,9 +193,36 @@ def intro_page():
                 st.markdown("#### 오류 메시지")
                 for msg in api_status["error_messages"]:
                     st.warning(msg)
+                
+                # 설정 가이드 제공
+                st.markdown("### Google Sheets 연결 가이드")
+                st.markdown("""
+                1. Google Cloud 콘솔에서 서비스 계정을 생성하세요.
+                2. 서비스 계정에 대한 JSON 키를 다운로드하세요.
+                3. `.streamlit/secrets.toml` 파일에 다음 형식으로 설정을 추가하세요:
+                
+                ```toml
+                [gcp_service_account]
+                type = "service_account"
+                project_id = "your-project-id"
+                private_key_id = "key-id"
+                private_key = "-----BEGIN PRIVATE KEY-----\nPrivateKeyContents\n-----END PRIVATE KEY-----\n"
+                client_email = "service-account-email@project-id.iam.gserviceaccount.com"
+                client_id = "client-id"
+                auth_uri = "https://accounts.google.com/o/oauth2/auth"
+                token_uri = "https://oauth2.googleapis.com/token"
+                auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+                client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/service-account-email%40project-id.iam.gserviceaccount.com"
+                
+                # 스프레드시트 ID 설정
+                spreadsheet_id = "your-spreadsheet-id"
+                ```
+                
+                4. 서비스 계정 이메일을 스프레드시트 편집자로 공유하세요.
+                """)
         except Exception as e:
             st.error(f"API 연결 상태 확인 중 오류 발생: {str(e)}")
-            st.info("계속해서 시스템을 사용할 수 있습니다.")
+            st.info("계속해서 시스템을 사용할 수 있지만, 일부 기능이 제한될 수 있습니다.")
     
     col1, col2 = st.columns(2)
     
@@ -728,7 +771,8 @@ def exam_page():
                 st.markdown(problem["문제내용"])
                 
                 # 저장된 답안 불러오기
-                saved_answer = st.session_state.student_answers.get(problem_id, {}).get("제출답안", "")
+                saved_answer = st.session_state.student_answers.get(problem_id, {})
+                student_answer = saved_answer.get("제출답안", "")
                 
                 # 보기가 있는 경우 라디오 버튼으로 표시
                 has_options = False
@@ -755,8 +799,8 @@ def exam_page():
                             
                             # 인덱스 확인 로직 개선
                             index = None
-                            if saved_answer in options:
-                                index = options.index(saved_answer)
+                            if student_answer in options:
+                                index = options.index(student_answer)
                             
                             selected = st.radio(
                                 f"문제 {idx}",
@@ -785,7 +829,7 @@ def exam_page():
                     st.markdown("### 답안 입력:")
                     answer = st.text_input(
                         f"문제 {idx} 답안",
-                        value=saved_answer,
+                        value=student_answer,
                         key=f"text_{problem_id}",
                         max_chars=200
                     )

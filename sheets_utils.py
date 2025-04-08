@@ -23,55 +23,105 @@ SCOPES = [
 def connect_to_sheets():
     """구글 스프레드시트에 연결합니다."""
     if not gspread_imported:
-        st.error("구글 시트 연결에 필요한 패키지가 설치되지 않았습니다.")
+        st.error("구글 시트 연결에 필요한 패키지가 설치되지 않았습니다. 'pip install gspread google-auth' 명령으로 설치해주세요.")
         return None
     
     try:
         # .streamlit/secrets.toml 파일에서 인증 정보 확인
-        if "gcp_service_account" in st.secrets:
+        if "gcp_service_account" not in st.secrets:
+            st.error("구글 서비스 계정 정보가 누락되었습니다. .streamlit/secrets.toml 파일에 gcp_service_account를 설정해주세요.")
+            print("구글 서비스 계정 정보가 누락되었습니다.")
+            return None
+            
+        if "spreadsheet_id" not in st.secrets:
+            st.error("스프레드시트 ID가 누락되었습니다. .streamlit/secrets.toml 파일에 spreadsheet_id를 설정해주세요.")
+            print("스프레드시트 ID가 누락되었습니다.")
+            return None
+        
+        # 서비스 계정 정보 확인
+        service_account_info = st.secrets["gcp_service_account"]
+        required_fields = ["type", "project_id", "private_key_id", "private_key", "client_email", "client_id"]
+        missing_fields = [field for field in required_fields if field not in service_account_info]
+        
+        if missing_fields:
+            missing_fields_str = ", ".join(missing_fields)
+            st.error(f"서비스 계정 정보에 필수 필드가 누락되었습니다: {missing_fields_str}")
+            print(f"서비스 계정 정보에 필수 필드가 누락되었습니다: {missing_fields_str}")
+            return None
+            
+        try:
+            # API 인증
             credentials = Credentials.from_service_account_info(
-                st.secrets["gcp_service_account"],
+                service_account_info,
                 scopes=SCOPES
             )
             gc = gspread.authorize(credentials)
             
             # 스프레드시트 열기
-            sheet = gc.open_by_key(st.secrets["spreadsheet_id"])
+            try:
+                sheet = gc.open_by_key(st.secrets["spreadsheet_id"])
+                print(f"스프레드시트 ID로 열기 성공: {st.secrets['spreadsheet_id']}")
+            except gspread.exceptions.APIError as e:
+                error_message = str(e)
+                if "404" in error_message:
+                    st.error(f"스프레드시트를 찾을 수 없습니다. ID를 확인해주세요: {st.secrets['spreadsheet_id']}")
+                    print(f"스프레드시트를 찾을 수 없습니다: {error_message}")
+                    return None
+                elif "403" in error_message:
+                    client_email = service_account_info.get("client_email", "알 수 없음")
+                    st.error(f"스프레드시트 접근 권한이 없습니다. 서비스 계정({client_email})에 편집 권한을 부여해주세요.")
+                    print(f"스프레드시트 접근 권한이 없습니다: {error_message}")
+                    return None
+                else:
+                    st.error(f"스프레드시트 열기 오류: {error_message}")
+                    print(f"스프레드시트 열기 오류: {error_message}")
+                    return None
             
             # 필수 워크시트 확인 및 생성
-            required_worksheets = ["problems", "student_answers", "student_weaknesses", "students"]
-            existing_worksheets = [ws.title for ws in sheet.worksheets()]
-            
-            for ws_name in required_worksheets:
-                if ws_name not in existing_worksheets:
-                    # 워크시트가 없으면 생성
-                    try:
-                        sheet.add_worksheet(title=ws_name, rows=1000, cols=20)
-                        ws = sheet.worksheet(ws_name)
-                        
-                        # 워크시트별 기본 헤더 설정
-                        if ws_name == "problems":
-                            headers = ["문제ID", "과목", "학년", "문제유형", "난이도", "키워드", "문제내용", "보기1", "보기2", "보기3", "보기4", "보기5", "정답", "해설"]
-                        elif ws_name == "student_answers":
-                            headers = ["학생ID", "학생이름", "학년", "문제ID", "과목", "문제유형", "난이도", "제출답안", "정답여부", "제출일시"]
-                        elif ws_name == "student_weaknesses":
-                            headers = ["학생ID", "키워드", "시도횟수", "정답횟수", "정답률", "최근시도일"]
-                        elif ws_name == "students":
-                            headers = ["학생ID", "이름", "학년", "실력등급", "등록일"]
-                        
-                        ws.append_row(headers)
-                    except Exception as e:
-                        st.warning(f"워크시트 '{ws_name}' 생성 중 오류: {str(e)}")
-            
-            # 연결 성공 로그
-            print(f"구글 스프레드시트 '{sheet.title}'에 성공적으로 연결되었습니다.")
-            return sheet
-        else:
-            st.error("구글 스프레드시트 인증 정보가 없습니다. .streamlit/secrets.toml 파일에 gcp_service_account와 spreadsheet_id를 설정해주세요.")
+            try:
+                required_worksheets = ["problems", "student_answers", "student_weaknesses", "students"]
+                existing_worksheets = [ws.title for ws in sheet.worksheets()]
+                print(f"기존 워크시트: {existing_worksheets}")
+                
+                for ws_name in required_worksheets:
+                    if ws_name not in existing_worksheets:
+                        # 워크시트가 없으면 생성
+                        try:
+                            print(f"워크시트 생성 시도: {ws_name}")
+                            new_ws = sheet.add_worksheet(title=ws_name, rows=1000, cols=20)
+                            
+                            # 워크시트별 기본 헤더 설정
+                            headers = []
+                            if ws_name == "problems":
+                                headers = ["문제ID", "과목", "학년", "문제유형", "난이도", "키워드", "문제내용", "보기1", "보기2", "보기3", "보기4", "보기5", "정답", "해설"]
+                            elif ws_name == "student_answers":
+                                headers = ["학생ID", "학생이름", "학년", "문제ID", "과목", "문제유형", "난이도", "제출답안", "정답여부", "제출일시"]
+                            elif ws_name == "student_weaknesses":
+                                headers = ["학생ID", "키워드", "시도횟수", "정답횟수", "정답률", "최근시도일"]
+                            elif ws_name == "students":
+                                headers = ["학생ID", "이름", "학년", "실력등급", "등록일"]
+                            
+                            if headers:
+                                new_ws.append_row(headers)
+                                print(f"워크시트 '{ws_name}' 생성 및 헤더 추가 완료")
+                        except Exception as ws_error:
+                            st.warning(f"워크시트 '{ws_name}' 생성 중 오류: {str(ws_error)}")
+                            print(f"워크시트 '{ws_name}' 생성 중 오류: {str(ws_error)}")
+                
+                # 연결 성공 로그
+                print(f"구글 스프레드시트 '{sheet.title}'에 성공적으로 연결되었습니다.")
+                return sheet
+            except Exception as ws_error:
+                st.error(f"워크시트 관리 중 오류 발생: {str(ws_error)}")
+                print(f"워크시트 관리 중 오류 발생: {str(ws_error)}")
+                return None
+        except Exception as auth_error:
+            st.error(f"인증 과정에서 오류 발생: {str(auth_error)}")
+            print(f"인증 과정에서 오류 발생: {str(auth_error)}")
             return None
     except Exception as e:
-        print(f"구글 스프레드시트 연결 오류: {str(e)}")
         st.error(f"구글 스프레드시트 연결 오류: {str(e)}")
+        print(f"구글 스프레드시트 연결 오류: {str(e)}")
         return None
 
 def get_worksheet_records(sheet, worksheet_name):
