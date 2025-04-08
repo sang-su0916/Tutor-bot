@@ -428,6 +428,7 @@ def exam_page():
     
     # 시험 상태 확인
     if 'exam_initialized' not in st.session_state or not st.session_state.exam_initialized:
+        # 시험 초기화
         st.session_state.exam_initialized = True
         st.session_state.student_answers = {}
         st.session_state.exam_problems = None  # 이미 로드된 문제가 있으면 초기화
@@ -436,32 +437,49 @@ def exam_page():
         st.session_state.exam_time_limit = 50 * 60  # 50분
         
         # 시험 문제 로드
-        st.session_state.exam_problems = load_exam_problems(
-            st.session_state.student_id, 
-            st.session_state.student_grade, 
-            20
-        )
+        with st.spinner("시험 문제를 불러오는 중..."):
+            st.session_state.exam_problems = load_exam_problems(
+                st.session_state.student_id, 
+                st.session_state.student_grade, 
+                20
+            )
+            
+            # 문제 로드 확인
+            if not st.session_state.exam_problems or len(st.session_state.exam_problems) < 20:
+                st.warning(f"학년에 맞는 문제를 충분히 불러오지 못했습니다. 가능한 문제로 시험을 구성합니다.")
     
     # 헤더 표시
     st.title("시험지")
     
+    # 자동 타이머 업데이트를 위한 현재 시간 (매 렌더링마다 갱신)
+    current_time = time.time()
+    
     # 남은 시간 계산
-    elapsed_time = time.time() - st.session_state.exam_start_time
+    elapsed_time = current_time - st.session_state.exam_start_time
     remaining_time = max(0, st.session_state.exam_time_limit - elapsed_time)
     minutes, seconds = divmod(int(remaining_time), 60)
     
     # 학생 정보 및 남은 시간 표시
-    st.markdown(f"남은 시간: {minutes:02d}:{seconds:02d}")
+    st.markdown(f"### 남은 시간: {minutes:02d}:{seconds:02d}")
     st.markdown(f"학생: {st.session_state.student_name} | 학년: {st.session_state.student_grade} | 실력등급: {st.session_state.student_level}")
+    
+    # 자동 타이머 업데이트 (3초마다)
+    st.write(f'<meta http-equiv="refresh" content="3">', unsafe_allow_html=True)
     
     # 남은 시간이 0이면 자동 제출
     if remaining_time <= 0 and 'exam_submitted' not in st.session_state:
+        st.warning("시험 시간이 종료되었습니다! 자동으로 제출됩니다.")
         st.session_state.exam_submitted = True
         st.session_state.page = "exam_score"
         st.rerun()
     
     # 시험 진행 상태
     st.info(f"총 20개의 문제가 있습니다. 모든 문제를 풀고 제출하세요.")
+    
+    # 문제 수 확인
+    actual_problem_count = len(st.session_state.exam_problems)
+    if actual_problem_count < 20:
+        st.warning(f"현재 {actual_problem_count}개의 문제만 로드되었습니다.")
     
     # 폼 생성
     with st.form("exam_form"):
@@ -472,8 +490,8 @@ def exam_page():
             # 문제 박스 생성
             with st.container(border=True):
                 # 문제 헤더
-                st.markdown(f"## 문제 {idx}/20")
-                st.markdown(f"과목: {problem['과목']} | 학년: {problem['학년']} | 유형: {problem['문제유형']} | 난이도: {problem['난이도']}")
+                st.markdown(f"## 문제 {idx}/{actual_problem_count}")
+                st.markdown(f"과목: {problem.get('과목', '영어')} | 학년: {problem.get('학년', '')} | 유형: {problem.get('문제유형', '객관식')} | 난이도: {problem.get('난이도', '중')}")
                 
                 # 문제 내용
                 st.markdown(problem["문제내용"])
@@ -496,23 +514,26 @@ def exam_page():
                             option_texts[key] = text
                             seen_options_text.add(text)
                     
-                    # 선택 라디오 버튼
-                    st.markdown("### 정답 선택:")
-                    selected = st.radio(
-                        f"문제 {idx}",
-                        options,
-                        format_func=lambda x: f"{x}: {option_texts[x]}",
-                        index=options.index(saved_answer) if saved_answer in options else None,  # 저장된 답안이 없으면 선택하지 않음
-                        key=f"radio_{problem_id}",
-                        label_visibility="collapsed"
-                    )
-                    
-                    # 학생 답안 저장
-                    if selected is not None:  # 선택된 경우에만 저장
-                        if problem_id not in st.session_state.student_answers:
-                            st.session_state.student_answers[problem_id] = problem.copy()
-                        st.session_state.student_answers[problem_id]["제출답안"] = selected
-                    
+                    # 보기가 있는지 확인
+                    if options:
+                        # 선택 라디오 버튼
+                        st.markdown("### 정답 선택:")
+                        selected = st.radio(
+                            f"문제 {idx}",
+                            options,
+                            format_func=lambda x: f"{x}: {option_texts[x]}",
+                            index=options.index(saved_answer) if saved_answer in options else None,  # 저장된 답안이 없으면 선택하지 않음
+                            key=f"radio_{problem_id}",
+                            label_visibility="collapsed"
+                        )
+                        
+                        # 학생 답안 저장
+                        if selected is not None:  # 선택된 경우에만 저장
+                            if problem_id not in st.session_state.student_answers:
+                                st.session_state.student_answers[problem_id] = problem.copy()
+                            st.session_state.student_answers[problem_id]["제출답안"] = selected
+                    else:
+                        st.error("이 문제에 대한 보기가 없습니다.")
                 else:
                     # 주관식인 경우 텍스트 입력
                     st.markdown("### 답안 입력:")
