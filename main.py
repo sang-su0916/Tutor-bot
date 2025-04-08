@@ -541,22 +541,84 @@ def load_exam_problems(student_id, student_grade, problem_count=20):
                 if "보기정보" not in p:
                     p["보기정보"] = {}
                 
-                # 보기 옵션(1번, 2번 등) 정보 추출 및 구조화
-                for key in list(p.keys()):
-                    if key.startswith("보기") and key != "보기정보":
-                        option_key = key.replace("보기", "")
-                        if option_key and p[key]:
-                            p["보기정보"][option_key] = p[key].strip()
+                # 보기가 있는 경우 라디오 버튼으로 표시
+                has_options = False
+                if "보기정보" in p and p["보기정보"]:
+                    options = []
+                    option_texts = {}
+                    
+                    # 보기 중복 확인을 위한 집합
+                    seen_options_text = set()
+                    
+                    try:
+                        # 보기 항목들을 정렬해서 일관된 순서로 표시
+                        sorted_options = sorted(p["보기정보"].items())
+                        
+                        # 보기 개수 표준화 - 최대 5개로 통일
+                        max_options = 5
+                        
+                        # 가능한 모든 보기키 생성 ("보기1"~"보기5")
+                        all_option_keys = [f"보기{i}" for i in range(1, max_options+1)]
+                        
+                        # 실제 있는 보기 처리
+                        for key, text in sorted_options:
+                            if not key.startswith("보기"):
+                                continue  # 보기 형식이 아닌 키는 건너뜀
+                                
+                            # 중복된 보기 텍스트 제거
+                            if text and text not in seen_options_text:
+                                options.append(key)
+                                option_texts[key] = text
+                                seen_options_text.add(text)
+                        
+                        # 보기가 있는지 확인
+                        if options:
+                            has_options = True
+                            # 선택 라디오 버튼
+                            st.markdown("### 정답 선택:")
+                            
+                            # 인덱스 확인 로직 개선
+                            index = None
+                            if p["제출답안"] in options:
+                                index = options.index(p["제출답안"])
+                            
+                            selected = st.radio(
+                                f"문제 {idx}",
+                                options,
+                                format_func=lambda x: f"{x.replace('보기', '')}: {option_texts[x]}",
+                                index=index,  # 저장된 답안이 없으면 선택하지 않음
+                                key=f"radio_{p['문제ID']}",
+                                label_visibility="collapsed"
+                            )
+                            
+                            # 학생 답안 저장
+                            if selected is not None:  # 선택된 경우에만 저장
+                                if p["문제ID"] not in st.session_state.student_answers:
+                                    st.session_state.student_answers[p["문제ID"]] = p.copy()
+                                st.session_state.student_answers[p["문제ID"]]["제출답안"] = selected
+                    except Exception as e:
+                        st.error(f"보기 처리 중 오류: {str(e)}")
                 
-                # 보기가 최소 2개 이상 있어야 함
-                if len(p.get("보기정보", {})) < 2:
-                    is_valid = False
-            
-            # 주관식 문제 유효성 검사
-            elif problem_type == "단답형" or problem_type == "서술형":
-                # 정답이 반드시 있어야 함
-                if not p.get("정답", "").strip():
-                    is_valid = False
+                # 보기가 없거나 처리 오류면 텍스트 입력으로 대체
+                if not has_options:
+                    # 선택형이지만 보기 정보가 없는 경우
+                    if p.get("문제유형") == "객관식":
+                        st.error("이 문제에 대한 보기 정보가 없습니다. 직접 답안을 입력해주세요.")
+                    
+                    # 주관식인 경우 텍스트 입력
+                    st.markdown("### 답안 입력:")
+                    answer = st.text_input(
+                        f"문제 {idx} 답안",
+                        value=p.get("제출답안", ""),
+                        key=f"text_{p['문제ID']}",
+                        max_chars=200
+                    )
+                    
+                    # 학생 답안 저장
+                    if answer.strip():  # 입력된 경우에만 저장
+                        if p["문제ID"] not in st.session_state.student_answers:
+                            st.session_state.student_answers[p["문제ID"]] = p.copy()
+                        st.session_state.student_answers[p["문제ID"]]["제출답안"] = answer
             
             # 이미 사용된 ID 제외 - 학생별로 추적
             if p["문제ID"] in st.session_state[student_key]:
@@ -802,7 +864,20 @@ def exam_page():
                     seen_options_text = set()
                     
                     try:
-                        for key, text in problem["보기정보"].items():
+                        # 보기 항목들을 정렬해서 일관된 순서로 표시
+                        sorted_options = sorted(problem["보기정보"].items())
+                        
+                        # 보기 개수 표준화 - 최대 5개로 통일
+                        max_options = 5
+                        
+                        # 가능한 모든 보기키 생성 ("보기1"~"보기5")
+                        all_option_keys = [f"보기{i}" for i in range(1, max_options+1)]
+                        
+                        # 실제 있는 보기 처리
+                        for key, text in sorted_options:
+                            if not key.startswith("보기"):
+                                continue  # 보기 형식이 아닌 키는 건너뜀
+                                
                             # 중복된 보기 텍스트 제거
                             if text and text not in seen_options_text:
                                 options.append(key)
@@ -823,7 +898,7 @@ def exam_page():
                             selected = st.radio(
                                 f"문제 {idx}",
                                 options,
-                                format_func=lambda x: f"{x}: {option_texts[x]}",
+                                format_func=lambda x: f"{x.replace('보기', '')}: {option_texts[x]}",
                                 index=index,  # 저장된 답안이 없으면 선택하지 않음
                                 key=f"radio_{problem_id}",
                                 label_visibility="collapsed"
