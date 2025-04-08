@@ -141,6 +141,33 @@ def connect_to_sheets():
 
     return None
 
+def get_worksheet_records(worksheet, limit=None):
+    """
+    워크시트에서 레코드를 가져오는 래퍼 함수입니다.
+    gspread 버전 호환성 문제를 해결합니다.
+    """
+    try:
+        # 최신 버전의 gspread는 limit 매개변수를 지원하지 않을 수 있음
+        if limit is not None:
+            try:
+                # 최신 버전은 limit 대신 end 파라미터를 사용할 수 있음
+                records = worksheet.get_all_records(end=limit+1)  # 헤더 행 + limit
+                return records[:limit]
+            except TypeError:
+                # 이전 버전의 경우 limit 파라미터를 시도 
+                try:
+                    return worksheet.get_all_records(limit=limit)
+                except:
+                    # 모든 레코드를 가져온 후 자르는 대체 방법
+                    records = worksheet.get_all_records()
+                    return records[:limit] if limit else records
+        else:
+            # limit 없이 모든 레코드 가져오기
+            return worksheet.get_all_records()
+    except Exception as e:
+        print(f"워크시트 데이터 가져오기 오류: {e}")
+        return []
+
 def get_student_weaknesses(student_id):
     """
     학생의 취약점(낮은 정답률을 보이는 키워드)을 가져옵니다.

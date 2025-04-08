@@ -85,20 +85,57 @@ def generate_feedback(question, student_answer, correct_answer, explanation):
             피드백: [피드백 내용]
             """
 
-        # API 호출
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "당신은 학생들의 답안을 채점하고 친절한 피드백을 제공하는 AI 튜터입니다."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
-            max_tokens=1000,
-            request_timeout=30
-        )
-
-        # 응답 파싱
-        output = response.choices[0].message.content.strip()
+        # API 호출 - 버전에 따라 다른 방식 사용
+        try:
+            # 이전 버전 API 사용 (ChatCompletion)
+            try:
+                response = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "당신은 학생들의 답안을 채점하고 친절한 피드백을 제공하는 AI 튜터입니다."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.7,
+                    max_tokens=1000,
+                )
+                
+                # 응답 파싱
+                output = response.choices[0].message.content.strip()
+            except (AttributeError, ImportError):
+                # 새 버전 API 사용 (OpenAI 클라이언트)
+                from openai import OpenAI
+                client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+                
+                response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "당신은 학생들의 답안을 채점하고 친절한 피드백을 제공하는 AI 튜터입니다."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.7,
+                    max_tokens=1000,
+                )
+                
+                # 응답 파싱 - 새 버전 API의 다른 응답 구조 처리
+                output = response.choices[0].message.content.strip()
+        except Exception as api_error:
+            # API 호출 실패 시 기본 응답 생성
+            print(f"OpenAI API 호출 실패: {api_error}")
+            if is_objective:
+                # 객관식: 정확히 일치해야 함
+                is_correct = (student_answer == correct_answer)
+            else:
+                # 단답형: 대소문자 및 공백 무시하고 비교
+                normalized_student = student_answer.lower().strip() if student_answer else ""
+                normalized_correct = correct_answer.lower().strip()
+                is_correct = (normalized_student == normalized_correct)
+            
+            score = 100 if is_correct else 0
+            
+            if score == 100:
+                return 100, "정답입니다! (API 호출 실패로 기본 피드백만 제공됩니다)"
+            else:
+                return 0, "틀렸습니다. (API 호출 실패로 기본 피드백만 제공됩니다)"
         
         try:
             # 점수와 피드백 분리
@@ -129,26 +166,8 @@ def generate_feedback(question, student_answer, correct_answer, explanation):
             else:
                 return 0, "틀렸습니다. 해설을 잘 읽고 다시 한 번 풀어보세요."
         
-    except openai.error.RateLimitError:
-        # API 사용량 초과
-        # 단답형 또는 객관식 여부에 따라 다른 기본 채점 로직 적용
-        if is_objective:
-            # 객관식: 정확히 일치해야 함
-            is_correct = (student_answer == correct_answer)
-        else:
-            # 단답형: 대소문자 및 공백 무시하고 비교
-            normalized_student = student_answer.lower().strip() if student_answer else ""
-            normalized_correct = correct_answer.lower().strip()
-            is_correct = (normalized_student == normalized_correct)
-        
-        score = 100 if is_correct else 0
-        
-        if score == 100:
-            return 100, "정답입니다! (AI 서버가 혼잡하여 상세 피드백은 잠시 후에 확인해주세요)"
-        else:
-            return 0, "틀렸습니다. (AI 서버가 혼잡하여 상세 피드백은 잠시 후에 확인해주세요)"
-        
-    except openai.error.AuthenticationError:
+    except Exception as e:
+        print(f"피드백 생성 중 오류: {e}")
         # 단답형 또는 객관식 여부에 따라 다른 기본 채점 로직 적용
         if is_objective:
             # 객관식: 정확히 일치해야 함
@@ -164,40 +183,4 @@ def generate_feedback(question, student_answer, correct_answer, explanation):
         if score == 100:
             return 100, "정답입니다! (AI 튜터 연결에 문제가 있어 기본 채점 결과만 제공됩니다)"
         else:
-            return 0, "틀렸습니다. (AI 튜터 연결에 문제가 있어 기본 채점 결과만 제공됩니다)"
-        
-    except openai.error.APIError:
-        # 단답형 또는 객관식 여부에 따라 다른 기본 채점 로직 적용
-        if is_objective:
-            # 객관식: 정확히 일치해야 함
-            is_correct = (student_answer == correct_answer)
-        else:
-            # 단답형: 대소문자 및 공백 무시하고 비교
-            normalized_student = student_answer.lower().strip() if student_answer else ""
-            normalized_correct = correct_answer.lower().strip()
-            is_correct = (normalized_student == normalized_correct)
-        
-        score = 100 if is_correct else 0
-        
-        if score == 100:
-            return 100, "정답입니다! (일시적인 오류로 기본 채점 결과만 제공됩니다)"
-        else:
-            return 0, "틀렸습니다. (일시적인 오류로 기본 채점 결과만 제공됩니다)"
-        
-    except Exception as e:
-        # 단답형 또는 객관식 여부에 따라 다른 기본 채점 로직 적용
-        if is_objective:
-            # 객관식: 정확히 일치해야 함
-            is_correct = (student_answer == correct_answer)
-        else:
-            # 단답형: 대소문자 및 공백 무시하고 비교
-            normalized_student = student_answer.lower().strip() if student_answer else ""
-            normalized_correct = correct_answer.lower().strip()
-            is_correct = (normalized_student == normalized_correct)
-        
-        score = 100 if is_correct else 0
-        
-        if score == 100:
-            return 100, "정답입니다! (피드백 생성에 실패하여 기본 채점 결과만 제공됩니다)"
-        else:
-            return 0, "틀렸습니다. (피드백 생성에 실패하여 기본 채점 결과만 제공됩니다)" 
+            return 0, "틀렸습니다. (AI 튜터 연결에 문제가 있어 기본 채점 결과만 제공됩니다)" 

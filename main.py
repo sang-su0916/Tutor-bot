@@ -11,7 +11,7 @@ if current_dir not in sys.path:
 
 # 모듈 임포트
 try:
-    from sheets_utils import connect_to_sheets, get_random_problem, save_student_answer
+    from sheets_utils import connect_to_sheets, get_random_problem, save_student_answer, get_worksheet_records
     from gpt_feedback import generate_feedback
     import admin  # 관리자 모듈 추가
     from student_analytics import get_problem_for_student, update_problem_stats, show_student_performance_dashboard  # 취약점 분석 모듈 추가
@@ -313,7 +313,9 @@ def load_exam_problems():
                 if sheet:
                     try:
                         worksheet = sheet.worksheet("problems")
-                        all_problems = worksheet.get_all_records()
+                        # 수정된 래퍼 함수 사용
+                        all_problems = get_worksheet_records(worksheet)
+                        
                         if all_problems:
                             # 학생 수준에 맞는 문제 필터링
                             student_grade = st.session_state.student_grade
@@ -1078,7 +1080,8 @@ def check_api_connections():
             try:
                 # 실제로 데이터 읽기 시도
                 worksheet = sheet.worksheet("problems")
-                records = worksheet.get_all_records(limit=1)  # 첫 번째 행만 읽기
+                # 새로운 래퍼 함수 사용
+                records = get_worksheet_records(worksheet, limit=1)  # 첫 번째 행만 읽기
                 connections["google_sheets"] = True
             except Exception as e:
                 connections["error_messages"].append(f"Google Sheets 접근 오류: {str(e)}")
@@ -1094,17 +1097,37 @@ def check_api_connections():
             openai.api_key = st.secrets["OPENAI_API_KEY"]
             
             try:
-                # 간단한 API 호출로 연결 테스트
-                response = openai.ChatCompletion.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "You are a helpful assistant."},
-                        {"role": "user", "content": "Hello!"}
-                    ],
-                    max_tokens=5
-                )
-                if response:
-                    connections["openai"] = True
+                # OpenAI의 API 버전에 따라 적절한 방법으로 호출
+                try:
+                    # 이전 버전 API 사용 (ChatCompletion)
+                    response = openai.ChatCompletion.create(
+                        model="gpt-3.5-turbo",
+                        messages=[
+                            {"role": "system", "content": "You are a helpful assistant."},
+                            {"role": "user", "content": "Hello!"}
+                        ],
+                        max_tokens=5
+                    )
+                    if response:
+                        connections["openai"] = True
+                except (AttributeError, ImportError) as e:
+                    # 새 버전 API 사용 (OpenAI 클라이언트)
+                    try:
+                        from openai import OpenAI
+                        client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+                        response = client.chat.completions.create(
+                            model="gpt-3.5-turbo",
+                            messages=[
+                                {"role": "system", "content": "You are a helpful assistant."},
+                                {"role": "user", "content": "Hello!"}
+                            ],
+                            max_tokens=5
+                        )
+                        if response:
+                            connections["openai"] = True
+                    except Exception as client_error:
+                        # 모든 방법이 실패하면 오류 메시지 추가
+                        connections["error_messages"].append(f"OpenAI API 호환성 오류: {str(client_error)}")
             except Exception as e:
                 connections["error_messages"].append(f"OpenAI API 오류: {str(e)}")
         else:
