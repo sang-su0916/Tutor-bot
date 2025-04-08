@@ -394,86 +394,149 @@ def load_exam_problems(student_id, student_grade, problem_count=20):
     
     st.info(f"학년 '{student_grade}'를 '{normalized_student_grade}'로 정규화했습니다.")
     
+    # 문제 유형 카운터 - 다양한 유형을 선택하기 위함
+    problem_type_count = {}
+    
     for p in all_problems:
         if ("문제ID" in p and "학년" in p and "문제내용" in p and "정답" in p):
-            # 문제 학년 정규화 및 비교
+            # 문제 학년, 유형 정규화 및 비교
             problem_grade = p.get("학년", "")
             normalized_problem_grade = normalize_grade(problem_grade)
+            problem_type = p.get("문제유형", "객관식")
             
             if normalized_problem_grade == normalized_student_grade:
-                # 이미 사용된 ID 제외
-                if p["문제ID"] not in st.session_state.used_problem_ids:
-                    # 보기 정보 포맷팅
-                    if "보기정보" not in p:
+                # 유효성 검사: 객관식이면 보기가 있어야 함
+                is_valid = True
+                
+                # 보기 정보 포맷팅 및 유효성 확인
+                if problem_type == "객관식":
+                    # 보기 정보 초기화 또는 재구성
+                    if "보기정보" not in p or not p["보기정보"]:
                         p["보기정보"] = {}
                         for i in range(1, 6):
                             option_key = f"보기{i}"
-                            if option_key in p and p[option_key]:
-                                p["보기정보"][option_key] = p[option_key]
+                            if option_key in p and p[option_key] and p[option_key].strip():
+                                p["보기정보"][option_key] = p[option_key].strip()
                     
+                    # 보기가 최소 2개 이상 있어야 함
+                    if len(p.get("보기정보", {})) < 2:
+                        is_valid = False
+                
+                # 주관식 문제 유효성 검사
+                elif problem_type == "단답형" or problem_type == "서술형":
+                    # 정답이 반드시 있어야 함
+                    if not p.get("정답", "").strip():
+                        is_valid = False
+                
+                # 이미 사용된 ID 제외
+                if p["문제ID"] in st.session_state.used_problem_ids:
+                    is_valid = False
+                
+                if is_valid:
+                    # 문제 유형 카운트 증가
+                    problem_type_count[problem_type] = problem_type_count.get(problem_type, 0) + 1
                     filtered_problems.append(p)
     
+    # 유형별 통계 정보 출력
     st.info(f"학년 '{normalized_student_grade}'에 맞는 문제 {len(filtered_problems)}개를 찾았습니다.")
+    if problem_type_count:
+        type_info = ", ".join([f"{t}: {c}개" for t, c in problem_type_count.items()])
+        st.info(f"문제 유형 분포: {type_info}")
+    
+    # 만약 충분한 문제가 없다면 더미 문제로 보충
+    if len(filtered_problems) < problem_count:
+        dummy_count = problem_count - len(filtered_problems)
+        st.warning(f"유효한 문제가 부족하여 {dummy_count}개의 더미 문제를 추가합니다.")
+        dummy_problems = generate_dummy_problems(student_grade, dummy_count)
+        filtered_problems.extend(dummy_problems)
     
     # 문제 유형별로 분류
-    problem_types = {}
+    problems_by_type = {}
     for p in filtered_problems:
-        if "문제유형" in p and p["문제유형"]:
-            ptype = p["문제유형"]
-            if ptype not in problem_types:
-                problem_types[ptype] = []
-            problem_types[ptype].append(p)
+        problem_type = p.get("문제유형", "기타")
+        if problem_type not in problems_by_type:
+            problems_by_type[problem_type] = []
+        problems_by_type[problem_type].append(p)
     
-    # 문제 유형별 통계 표시
-    st.info(f"문제 유형 분포: {', '.join([f'{t}: {len(ps)}개' for t, ps in problem_types.items()])}")
-    
-    # 각 유형별로 골고루 문제 선택
+    # 각 유형별로 균등하게 문제 선택 (유형별 비율 계산)
+    selected_problems = []
     remaining_count = problem_count
-    if problem_types:
-        # 각 유형별로 최소 문제 수 계산
-        type_counts = {}
-        min_per_type = max(1, problem_count // len(problem_types))
-        
-        for ptype, type_problems in problem_types.items():
-            # 유형별 문제 수와 최소 요구 수 중 작은 값 선택
-            type_counts[ptype] = min(len(type_problems), min_per_type)
-            remaining_count -= type_counts[ptype]
-        
-        # 유형별로 문제 선택
-        for ptype, count in type_counts.items():
-            type_problems = problem_types[ptype]
-            # 무작위로 선택
-            selected = random.sample(type_problems, count) if len(type_problems) > count else type_problems
-            
-            for p in selected:
-                if p["문제ID"] not in st.session_state.used_problem_ids:
-                    problems.append(p)
-                    st.session_state.used_problem_ids.add(p["문제ID"])
     
-    # 나머지 문제 수는 무작위로 선택
+    # 모든 유형에서 최소 1문제씩 선택
+    for problem_type, type_problems in problems_by_type.items():
+        if remaining_count <= 0:
+            break
+            
+        # 각 유형에서 1문제 선택
+        selected = random.choice(type_problems)
+        selected_problems.append(selected)
+        st.session_state.used_problem_ids.add(selected["문제ID"])
+        
+        # 선택된 문제는 제외
+        type_problems.remove(selected)
+        remaining_count -= 1
+    
+    # 남은 문제 수를 유형별 비율에 따라 배분
+    if remaining_count > 0 and problems_by_type:
+        # 각 유형별 남은 문제 수 계산
+        total_remaining = sum(len(probs) for probs in problems_by_type.values())
+        
+        if total_remaining > 0:
+            # 유형별 비율 계산 및 문제 선택
+            for problem_type, type_problems in problems_by_type.items():
+                if not type_problems or remaining_count <= 0:
+                    continue
+                
+                # 이 유형에서 선택할 문제 수 (최소 1개, 비율 기반 계산)
+                type_ratio = len(type_problems) / total_remaining
+                type_count = min(remaining_count, max(1, round(remaining_count * type_ratio)))
+                
+                # 실제 선택 가능한 문제 수로 제한
+                type_count = min(type_count, len(type_problems))
+                
+                # 해당 유형에서 무작위로 선택
+                for _ in range(type_count):
+                    if type_problems and remaining_count > 0:
+                        selected = random.choice(type_problems)
+                        selected_problems.append(selected)
+                        st.session_state.used_problem_ids.add(selected["문제ID"])
+                        type_problems.remove(selected)
+                        remaining_count -= 1
+    
+    # 여전히 부족하다면 남은 문제들 중에서 무작위로 선택
     remaining_problems = [p for p in filtered_problems if p["문제ID"] not in st.session_state.used_problem_ids]
     
-    while len(problems) < problem_count and remaining_problems and attempts < max_attempts:
-        random_problem = random.choice(remaining_problems)
-        if random_problem["문제ID"] not in st.session_state.used_problem_ids:
-            problems.append(random_problem)
-            st.session_state.used_problem_ids.add(random_problem["문제ID"])
-            remaining_problems.remove(random_problem)
+    while remaining_count > 0 and remaining_problems and attempts < max_attempts:
+        selected = random.choice(remaining_problems)
+        selected_problems.append(selected)
+        st.session_state.used_problem_ids.add(selected["문제ID"])
+        remaining_problems.remove(selected)
+        remaining_count -= 1
         attempts += 1
     
-    # 충분한 문제가 없는 경우 더미 문제로 채우기
-    if len(problems) < problem_count:
-        dummy_count = problem_count - len(problems)
-        st.warning(f"학년에 맞는 문제가 충분하지 않아 {dummy_count}개의 더미 문제를 추가합니다.")
-        dummy_problems = generate_dummy_problems(student_grade, dummy_count)
-        problems.extend(dummy_problems)
+    # 여전히 부족하다면 더미 문제로 추가
+    if remaining_count > 0:
+        dummy_problems = generate_dummy_problems(student_grade, remaining_count)
+        selected_problems.extend(dummy_problems)
         
         # 더미 문제 ID 추적
         for p in dummy_problems:
             if "문제ID" in p:
                 st.session_state.used_problem_ids.add(p["문제ID"])
     
-    return problems[:problem_count]  # 최대 problem_count개 반환
+    # 선택된 문제 목록을 무작위로 섞기
+    random.shuffle(selected_problems)
+    
+    # 문제 유형 분포 확인 - 로그용
+    final_type_count = {}
+    for p in selected_problems:
+        problem_type = p.get("문제유형", "기타")
+        final_type_count[problem_type] = final_type_count.get(problem_type, 0) + 1
+    
+    type_distribution = ", ".join([f"{t}: {c}개" for t, c in final_type_count.items()])
+    st.info(f"최종 선택된 문제 유형 분포: {type_distribution}")
+    
+    return selected_problems[:problem_count]
 
 def normalize_grade(grade_str):
     """

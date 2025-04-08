@@ -329,6 +329,8 @@ def get_random_problem(student_id=None, student_grade=None, problem_type=None):
         problems_ws = sheet.worksheet("problems")
         all_problems = problems_ws.get_all_records()
         
+        print(f"총 {len(all_problems)}개의 문제를 시트에서 로드했습니다.")
+        
         # 학생 학년 정규화
         normalized_student_grade = ""
         if student_grade:
@@ -336,6 +338,8 @@ def get_random_problem(student_id=None, student_grade=None, problem_type=None):
         
         # 유효한 문제만 필터링 (필수 필드 확인)
         valid_problems = []
+        problem_types_found = set()
+        
         for p in all_problems:
             if "문제ID" in p and "문제내용" in p and "정답" in p:
                 # 학년 필터링 - 학생 학년이 제공된 경우
@@ -352,15 +356,26 @@ def get_random_problem(student_id=None, student_grade=None, problem_type=None):
                 if problem_type and p.get("문제유형") != problem_type:
                     continue  # 문제 유형이 다르면 건너뛰기
                 
-                # 보기 정보 포맷팅
-                if "보기정보" not in p:
+                # 문제 유형 기록 (디버깅 및 다양성 확인용)
+                current_type = p.get("문제유형", "기타")
+                problem_types_found.add(current_type)
+                
+                # 보기 정보 포맷팅 - 반드시 보기 정보를 올바르게 구성
+                if "보기정보" not in p or not p["보기정보"]:
                     p["보기정보"] = {}
                     for i in range(1, 6):
                         option_key = f"보기{i}"
-                        if option_key in p and p[option_key]:
-                            p["보기정보"][option_key] = p[option_key]
+                        if option_key in p and p[option_key] and p[option_key].strip():
+                            p["보기정보"][option_key] = p[option_key].strip()
+                
+                # 객관식인 경우 보기가 잘 설정되었는지 확인
+                if p.get("문제유형") == "객관식" and (not p.get("보기정보") or len(p.get("보기정보", {})) < 2):
+                    print(f"유효하지 않은 객관식 문제를 건너뜁니다. 문제ID: {p.get('문제ID')} (보기 부족)")
+                    continue
                 
                 valid_problems.append(p)
+        
+        print(f"유효한 문제 {len(valid_problems)}개를 찾았습니다. 문제 유형: {sorted(problem_types_found)}")
         
         # 유효한 문제가 없으면 더미 문제 반환
         if not valid_problems:
@@ -374,7 +389,7 @@ def get_random_problem(student_id=None, student_grade=None, problem_type=None):
             for weakness in student_weaknesses:
                 keyword = weakness.get("키워드", "")
                 if keyword:
-                    correct_rate = weakness.get("정답률", 50)
+                    correct_rate = weakness.get("정답횟수", 0) / max(1, weakness.get("시도횟수", 1)) * 100
                     # 정답률이 낮을수록 높은 가중치 (취약할수록 자주 출제)
                     weight = max(1, 100 - correct_rate)
                     keyword_weights[keyword] = weight
@@ -599,83 +614,133 @@ def get_dummy_problem(student_grade="중학교 1학년"):
     grade_prefix = full_grade[0]  # 중 또는 고
     grade_level = full_grade[1]   # 1, 2, 또는 3
     
+    # 다양한 문제 유형 생성을 위한 랜덤 선택
+    problem_type = random.choice(["객관식", "단답형"])
+    
     # 학년별 다른 문제 내용 생성
     if grade_prefix == "중":
         if grade_level == "1":
-            question = "Which verb best completes the sentence: My parents ___ the article?"
-            options = {
-                "보기1": "analyze",
-                "보기2": "analyzes",
-                "보기3": "analyzing",
-                "보기4": "analyzed"
-            }
-            answer = "보기1"
-            explanation = "주어가 '부모님(My parents)'으로 복수형이므로, 복수형 동사 'analyze'가 정답입니다."
+            if problem_type == "객관식":
+                question = "Which verb best completes the sentence: My parents ___ the article?"
+                options = {
+                    "보기1": "analyze",
+                    "보기2": "analyzes",
+                    "보기3": "analyzing",
+                    "보기4": "analyzed",
+                    "보기5": "to analyze"
+                }
+                answer = "보기1"
+                explanation = "주어가 '부모님(My parents)'으로 복수형이므로, 복수형 동사 'analyze'가 정답입니다."
+            else:
+                question = "What is the past tense of the verb 'swim'?"
+                options = {}
+                answer = "swam"
+                explanation = "'swim'의 과거형은 'swam'입니다."
         elif grade_level == "2":
-            question = "Choose the correct form: If I ___ rich, I would buy a new car."
-            options = {
-                "보기1": "am",
-                "보기2": "was",
-                "보기3": "were",
-                "보기4": "be"
-            }
-            answer = "보기3"
-            explanation = "가정법 과거에서는 'If I were...'의 형태를 사용합니다."
+            if problem_type == "객관식":
+                question = "Choose the correct form: If I ___ rich, I would buy a new car."
+                options = {
+                    "보기1": "am",
+                    "보기2": "was",
+                    "보기3": "were",
+                    "보기4": "be",
+                    "보기5": "being"
+                }
+                answer = "보기3"
+                explanation = "가정법 과거에서는 'If I were...'의 형태를 사용합니다."
+            else:
+                question = "What is the comparative form of the adjective 'good'?"
+                options = {}
+                answer = "better"
+                explanation = "'good'의 비교급은 'better'입니다."
         else:  # 중3
-            question = "Complete the sentence: She has been studying English ___ three years."
-            options = {
-                "보기1": "since",
-                "보기2": "for",
-                "보기3": "during",
-                "보기4": "in"
-            }
-            answer = "보기2"
-            explanation = "특정 기간을 나타낼 때는 'for'를 사용합니다."
+            if problem_type == "객관식":
+                question = "Complete the sentence: She has been studying English ___ three years."
+                options = {
+                    "보기1": "since",
+                    "보기2": "for",
+                    "보기3": "during",
+                    "보기4": "in",
+                    "보기5": "within"
+                }
+                answer = "보기2"
+                explanation = "특정 기간을 나타낼 때는 'for'를 사용합니다."
+            else:
+                question = "What is the superlative form of the adjective 'far'?"
+                options = {}
+                answer = "farthest"
+                explanation = "'far'의 최상급은 'farthest'입니다."
     else:  # 고등학교
         if grade_level == "1":
-            question = "Choose the expression that best completes the dialogue: A: I'm so tired. B: ___"
-            options = {
-                "보기1": "So do I.",
-                "보기2": "So am I.",
-                "보기3": "Neither am I.",
-                "보기4": "Neither do I."
-            }
-            answer = "보기2"
-            explanation = "상대방의 상태에 대해 동의할 때는 'So + 조동사/be동사 + 주어'를 사용합니다."
+            if problem_type == "객관식":
+                question = "Choose the expression that best completes the dialogue: A: I'm so tired. B: ___"
+                options = {
+                    "보기1": "So do I.",
+                    "보기2": "So am I.",
+                    "보기3": "Neither am I.",
+                    "보기4": "Neither do I.",
+                    "보기5": "So I am."
+                }
+                answer = "보기2"
+                explanation = "상대방의 상태에 대해 동의할 때는 'So + 조동사/be동사 + 주어'를 사용합니다."
+            else:
+                question = "What is the past participle of the verb 'break'?"
+                options = {}
+                answer = "broken"
+                explanation = "'break'의 과거분사는 'broken'입니다."
         elif grade_level == "2":
-            question = "Fill in the blank: In spite of ___ late, he arrived at the meeting on time."
-            options = {
-                "보기1": "leave",
-                "보기2": "leaving",
-                "보기3": "to leave",
-                "보기4": "left"
-            }
-            answer = "보기2"
-            explanation = "'In spite of' 다음에는 명사나 동명사가 옵니다."
+            if problem_type == "객관식":
+                question = "Fill in the blank: In spite of ___ late, he arrived at the meeting on time."
+                options = {
+                    "보기1": "leave",
+                    "보기2": "leaving",
+                    "보기3": "to leave",
+                    "보기4": "left",
+                    "보기5": "to be left"
+                }
+                answer = "보기2"
+                explanation = "'In spite of' 다음에는 명사나 동명사가 옵니다."
+            else:
+                question = "What is the passive voice of 'They are building a new school'?"
+                options = {}
+                answer = "A new school is being built"
+                explanation = "능동태문장 'They are building a new school'의 수동태는 'A new school is being built'입니다."
         else:  # 고3
-            question = "Select the word that does NOT belong with the others:"
-            options = {
-                "보기1": "collaborate",
-                "보기2": "cooperate",
-                "보기3": "participate",
-                "보기4": "compete"
-            }
-            answer = "보기4"
-            explanation = "'compete'는 '경쟁하다'라는 의미로, 다른 단어들('함께 일하다', '협력하다', '참여하다')과 의미가 다릅니다."
+            if problem_type == "객관식":
+                question = "Select the word that does NOT belong with the others:"
+                options = {
+                    "보기1": "collaborate",
+                    "보기2": "cooperate",
+                    "보기3": "participate",
+                    "보기4": "compete",
+                    "보기5": "coordinate"
+                }
+                answer = "보기4"
+                explanation = "'compete'는 '경쟁하다'라는 의미로, 다른 단어들('함께 일하다', '협력하다', '참여하다')과 의미가 다릅니다."
+            else:
+                question = "What is the gerund form of the phrasal verb 'give up'?"
+                options = {}
+                answer = "giving up"
+                explanation = "동명사 형태는 동사에 '-ing'를 붙이는데, 구동사인 경우 첫 번째 단어에만 '-ing'를 붙입니다."
     
     # 더미 문제 반환
-    return {
+    dummy_problem = {
         "문제ID": f"dummy-{uuid.uuid4()}",
         "과목": "영어",
         "학년": full_grade,  # 정규화된 학년 정보
-        "문제유형": "객관식",
+        "문제유형": problem_type,
         "난이도": "중",
         "문제내용": question,
-        "보기정보": options,
         "정답": answer,
         "키워드": "영어 문법",
         "해설": explanation
     }
+    
+    # 객관식인 경우만 보기 정보 추가
+    if problem_type == "객관식" and options:
+        dummy_problem["보기정보"] = options
+    
+    return dummy_problem
 
 def save_student_result(student_id, student_name, student_grade, results):
     """
