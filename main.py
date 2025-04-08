@@ -277,6 +277,19 @@ def student_dashboard():
             st.session_state.start_time = time.time()
             st.session_state.time_limit = 50 * 60  # 50분(초 단위)
             st.session_state.student_answers = {}
+            
+            # 시험 관련 상태 초기화
+            if 'exam_initialized' in st.session_state:
+                del st.session_state.exam_initialized
+            if 'exam_problems' in st.session_state:
+                del st.session_state.exam_problems
+            if 'exam_submitted' in st.session_state:
+                del st.session_state.exam_submitted
+            if 'exam_results' in st.session_state:
+                del st.session_state.exam_results
+            if 'feedback_data' in st.session_state:
+                del st.session_state.feedback_data
+                
             st.session_state.all_problems_loaded = False
             st.session_state.page = "exam_page"
             st.rerun()
@@ -417,6 +430,7 @@ def exam_page():
     if 'exam_initialized' not in st.session_state or not st.session_state.exam_initialized:
         st.session_state.exam_initialized = True
         st.session_state.student_answers = {}
+        st.session_state.exam_problems = None  # 이미 로드된 문제가 있으면 초기화
         st.session_state.exam_answered_count = 0
         st.session_state.exam_start_time = time.time()
         st.session_state.exam_time_limit = 50 * 60  # 50분
@@ -488,15 +502,16 @@ def exam_page():
                         f"문제 {idx}",
                         options,
                         format_func=lambda x: f"{x}: {option_texts[x]}",
-                        index=options.index(saved_answer) if saved_answer in options else 0,
+                        index=options.index(saved_answer) if saved_answer in options else None,  # 저장된 답안이 없으면 선택하지 않음
                         key=f"radio_{problem_id}",
                         label_visibility="collapsed"
                     )
                     
                     # 학생 답안 저장
-                    if problem_id not in st.session_state.student_answers:
-                        st.session_state.student_answers[problem_id] = problem.copy()
-                    st.session_state.student_answers[problem_id]["제출답안"] = selected
+                    if selected is not None:  # 선택된 경우에만 저장
+                        if problem_id not in st.session_state.student_answers:
+                            st.session_state.student_answers[problem_id] = problem.copy()
+                        st.session_state.student_answers[problem_id]["제출답안"] = selected
                     
                 else:
                     # 주관식인 경우 텍스트 입력
@@ -509,9 +524,10 @@ def exam_page():
                     )
                     
                     # 학생 답안 저장
-                    if problem_id not in st.session_state.student_answers:
-                        st.session_state.student_answers[problem_id] = problem.copy()
-                    st.session_state.student_answers[problem_id]["제출답안"] = answer
+                    if answer.strip():  # 입력된 경우에만 저장
+                        if problem_id not in st.session_state.student_answers:
+                            st.session_state.student_answers[problem_id] = problem.copy()
+                        st.session_state.student_answers[problem_id]["제출답안"] = answer
         
         # 제출 버튼
         submit_button = st.form_submit_button("시험지 제출하기", use_container_width=True)
