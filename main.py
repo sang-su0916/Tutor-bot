@@ -1,4 +1,7 @@
 import streamlit as st
+import time
+import uuid
+import random  # random 모듈 추가
 
 # 페이지 설정 - 가장 먼저 호출되어야 함
 st.set_page_config(
@@ -13,10 +16,8 @@ st.set_page_config(
     }
 )
 
-import uuid
 import os
 import sys
-import time
 
 # 현재 디렉토리를 시스템 경로에 추가
 current_dir = os.path.dirname(os.path.abspath(__file__))
