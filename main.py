@@ -1108,8 +1108,8 @@ def check_api_connections():
                     max_tokens=5
                 )
                 
-                # 0.28 버전에서는 'message' 속성이 있는지 확인
-                if response and hasattr(response.choices[0], 'message'):
+                # 0.28 버전에서는 response.choices[0].message.content로 접근
+                if response and hasattr(response.choices[0], 'message') and hasattr(response.choices[0].message, 'content'):
                     # 정상적으로 응답이 있으면 연결 성공
                     connections["openai"] = True
                 else:
