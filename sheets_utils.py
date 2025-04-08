@@ -272,29 +272,67 @@ def get_random_problem(student_id=None, student_grade=None, problem_type=None):
             print("Sheets 연결 실패, 더미 문제를 반환합니다.")
             return get_dummy_problem(student_grade)
         
-        # 문제 워크시트 가져오기
-        problems_sheet = spreadsheet.worksheet("problems")
+        # 스프레드시트 정보 확인 및 출력
+        print(f"스프레드시트 제목: {spreadsheet.title}")
+        worksheets = spreadsheet.worksheets()
+        worksheet_names = [ws.title for ws in worksheets]
+        print(f"워크시트 목록: {', '.join(worksheet_names)}")
+        
+        # 문제 워크시트 가져오기 시도
+        problems_worksheet_name = None
+        for name in worksheet_names:
+            if "problem" in name.lower() or "문제" in name:
+                problems_worksheet_name = name
+                break
+        
+        if not problems_worksheet_name:
+            if "problems" in worksheet_names:
+                problems_worksheet_name = "problems"
+            else:
+                print("문제 워크시트를 찾을 수 없습니다, 더미 문제를 반환합니다.")
+                return get_dummy_problem(student_grade)
+        
+        print(f"사용할 문제 워크시트: {problems_worksheet_name}")
+        problems_sheet = spreadsheet.worksheet(problems_worksheet_name)
+        
+        # 헤더 확인
+        headers = problems_sheet.row_values(1)
+        print(f"문제 워크시트 헤더: {headers}")
+        
+        # 데이터 가져오기
         all_problems = problems_sheet.get_all_records()
+        print(f"총 {len(all_problems)}개의 문제 데이터를 불러왔습니다.")
         
         if not all_problems:
             print("문제가 없습니다, 더미 문제를 반환합니다.")
             return get_dummy_problem(student_grade)
+        
+        # 첫 번째 문제 데이터 구조 확인
+        first_problem = all_problems[0]
+        print(f"첫 번째 문제 키: {list(first_problem.keys())}")
         
         # 필수 필드 검증 및 필터링
         valid_problems = []
         for problem in all_problems:
             # 필수 필드 검증
             required_fields = ["문제ID", "과목", "학년", "문제유형", "난이도", "문제내용", "정답"]
-            if all(field in problem and problem[field] for field in required_fields):
-                # 학년 필터링
-                if student_grade and problem["학년"] != student_grade:
-                    continue
-                
-                # 문제 유형 필터링
-                if problem_type and problem["문제유형"] != problem_type:
-                    continue
-                
-                valid_problems.append(problem)
+            # 모든 필드가 존재하고 값이 있는지 확인
+            missing_fields = [field for field in required_fields if field not in problem or not problem[field]]
+            
+            if missing_fields:
+                continue  # 필수 필드가 누락된 문제는 건너뜁니다
+            
+            # 학년 필터링
+            if student_grade and problem["학년"] != student_grade:
+                continue
+            
+            # 문제 유형 필터링
+            if problem_type and problem["문제유형"] != problem_type:
+                continue
+            
+            valid_problems.append(problem)
+        
+        print(f"필터링 후 유효한 문제 수: {len(valid_problems)}/{len(all_problems)}")
         
         if not valid_problems:
             print(f"유효한 문제가 없습니다. 총 {len(all_problems)}개 문제 중 필터링 후 0개 남음.")
@@ -304,33 +342,46 @@ def get_random_problem(student_id=None, student_grade=None, problem_type=None):
         if student_id:
             try:
                 # 학생 약점 데이터 가져오기
-                weaknesses_sheet = spreadsheet.worksheet("student_weaknesses")
-                weaknesses_data = weaknesses_sheet.get_all_records()
-                
-                # 해당 학생의 약점 찾기
-                student_weaknesses = None
-                for record in weaknesses_data:
-                    if record.get("student_id") == student_id:
-                        student_weaknesses = record.get("weaknesses", "")
+                weaknesses_worksheet_name = None
+                for name in worksheet_names:
+                    if "weakness" in name.lower() or "약점" in name:
+                        weaknesses_worksheet_name = name
                         break
                 
-                # 약점이 있으면 관련 문제 필터링
-                if student_weaknesses:
-                    weakness_keywords = [kw.strip() for kw in student_weaknesses.split(',')]
-                    weakness_related_problems = []
+                if weaknesses_worksheet_name:
+                    print(f"학생 약점 워크시트 발견: {weaknesses_worksheet_name}")
+                    weaknesses_sheet = spreadsheet.worksheet(weaknesses_worksheet_name)
+                    weaknesses_data = weaknesses_sheet.get_all_records()
                     
-                    for problem in valid_problems:
-                        # 문제 키워드나 내용에 약점 키워드가 포함되어 있는지 확인
-                        for keyword in weakness_keywords:
-                            if (keyword in problem.get("키워드", "") or 
-                                keyword in problem.get("문제내용", "")):
-                                weakness_related_problems.append(problem)
+                    # 해당 학생의 약점 찾기
+                    student_weaknesses = None
+                    for record in weaknesses_data:
+                        if record.get("학생ID") == student_id or record.get("student_id") == student_id:
+                            weakness_field = next((f for f in record if "약점" in f or "weakness" in f.lower()), None)
+                            if weakness_field and record.get(weakness_field):
+                                student_weaknesses = record.get(weakness_field)
                                 break
                     
-                    # 약점 관련 문제가 있으면 그 중에서 선택
-                    if weakness_related_problems:
-                        return random.choice(weakness_related_problems)
-                    # 없으면 일반 필터링된 문제에서 선택 (아래 코드로 진행)
+                    # 약점이 있으면 관련 문제 필터링
+                    if student_weaknesses:
+                        weakness_keywords = [kw.strip() for kw in student_weaknesses.split(',')]
+                        print(f"학생 약점 키워드: {weakness_keywords}")
+                        weakness_related_problems = []
+                        
+                        for problem in valid_problems:
+                            # 문제 키워드나 내용에 약점 키워드가 포함되어 있는지 확인
+                            for keyword in weakness_keywords:
+                                if (keyword in problem.get("키워드", "") or 
+                                    keyword in problem.get("문제내용", "")):
+                                    weakness_related_problems.append(problem)
+                                    break
+                        
+                        # 약점 관련 문제가 있으면 그 중에서 선택
+                        if weakness_related_problems:
+                            print(f"약점 관련 문제 수: {len(weakness_related_problems)}")
+                            selected_problem = random.choice(weakness_related_problems)
+                            print(f"약점 기반 문제를 선택했습니다. ID: {selected_problem.get('문제ID', 'unknown')}")
+                            return selected_problem
             except Exception as e:
                 print(f"약점 기반 필터링 오류: {str(e)}")
                 # 오류 발생시 일반 필터링된 문제로 진행
@@ -343,6 +394,7 @@ def get_random_problem(student_id=None, student_grade=None, problem_type=None):
         
     except Exception as e:
         print(f"문제 가져오기 오류: {str(e)}")
+        traceback.print_exc()  # 전체 오류 스택 트레이스 출력
         return get_dummy_problem(student_grade)
 
 def get_dummy_problem(student_grade=None):
