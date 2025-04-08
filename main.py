@@ -93,8 +93,12 @@ def check_api_connections():
     
     # Google Sheets API 연결 확인
     try:
+        # .streamlit/secrets.toml 파일이 존재하는지 확인
+        if not hasattr(st, 'secrets') or not st.secrets:
+            status["error_messages"].append("secrets.toml 파일이 없거나 읽을 수 없습니다. .streamlit/secrets.toml 파일을 생성해주세요.")
+            return status
+            
         if "gcp_service_account" not in st.secrets or "spreadsheet_id" not in st.secrets:
-            st.error("구글 스프레드시트 설정이 누락되었습니다. .streamlit/secrets.toml 파일을 확인하세요.")
             status["error_messages"].append("Google Sheets 설정 누락: gcp_service_account 또는 spreadsheet_id가 없습니다.")
         else:
             # 서비스 계정 정보 확인
@@ -124,6 +128,10 @@ def check_api_connections():
     
     # Gemini API 연결 확인
     try:
+        if not hasattr(st, 'secrets') or not st.secrets:
+            status["error_messages"].append("secrets.toml 파일이 없거나 읽을 수 없습니다.")
+            return status
+            
         if "GOOGLE_API_KEY" in st.secrets:
             try:
                 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
@@ -171,6 +179,39 @@ def intro_page():
     st.title("GPT 학습 피드백 시스템")
     st.markdown("#### 우리 학원 전용 AI 튜터")
     
+    # secrets.toml 파일 존재 여부 확인
+    if not hasattr(st, 'secrets') or not st.secrets:
+        st.error("⚠️ 구성 파일이 없습니다: .streamlit/secrets.toml 파일을 생성해주세요.")
+        st.markdown("""
+        ### .streamlit/secrets.toml 파일 설정 방법
+        
+        1. 프로젝트 루트 디렉토리에 `.streamlit` 폴더를 생성하세요.
+        2. 그 안에 `secrets.toml` 파일을 생성하세요.
+        3. 다음 내용을 추가하세요:
+        
+        ```toml
+        [gcp_service_account]
+        type = "service_account"
+        project_id = "your-project-id"
+        private_key_id = "key-id"
+        private_key = "-----BEGIN PRIVATE KEY-----\\nPrivateKeyContents\\n-----END PRIVATE KEY-----\\n"
+        client_email = "service-account-email@project-id.iam.gserviceaccount.com"
+        client_id = "client-id"
+        auth_uri = "https://accounts.google.com/o/oauth2/auth"
+        token_uri = "https://oauth2.googleapis.com/token"
+        auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+        client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/service-account-email%40project-id.iam.gserviceaccount.com"
+        
+        # 스프레드시트 ID 설정
+        spreadsheet_id = "your-spreadsheet-id-here"
+        
+        # Gemini API 키 설정
+        GOOGLE_API_KEY = "your-gemini-api-key-here"
+        ```
+        
+        4. 자세한 설정 방법은 아래 API 연결 상태 섹션의 가이드를 참고하세요.
+        """)
+    
     # API 연결 상태 확인 및 자세한 정보 표시
     with st.expander("API 연결 상태", expanded=True):
         try:
@@ -182,12 +223,14 @@ def intro_page():
                     st.success("Google Sheets: 연결됨 ✅")
                 else:
                     st.error("Google Sheets: 연결 안됨 ❌")
+                    st.warning("⚠️ 구글 시트 연결이 필요합니다. 아래 가이드를 참고하세요.")
             
             with col2:
                 if api_status["gemini"]:
                     st.success("Gemini API: 연결됨 ✅")
                 else:
                     st.error("Gemini API: 연결 안됨 ❌")
+                    st.warning("⚠️ Gemini API 키 설정이 필요합니다.")
             
             if api_status["error_messages"]:
                 st.markdown("#### 오류 메시지")
@@ -197,16 +240,41 @@ def intro_page():
                 # 설정 가이드 제공
                 st.markdown("### Google Sheets 연결 가이드")
                 st.markdown("""
-                1. Google Cloud 콘솔에서 서비스 계정을 생성하세요.
-                2. 서비스 계정에 대한 JSON 키를 다운로드하세요.
-                3. `.streamlit/secrets.toml` 파일에 다음 형식으로 설정을 추가하세요:
+                #### 1. 구글 클라우드에서 서비스 계정 생성하기
+                1. [Google Cloud Console](https://console.cloud.google.com/)에 로그인하세요.
+                2. 프로젝트를 생성하거나 기존 프로젝트를 선택하세요.
+                3. 좌측 메뉴에서 "IAM 및 관리자" > "서비스 계정"으로 이동하세요.
+                4. "서비스 계정 만들기"를 클릭하세요.
+                5. 서비스 계정 이름과 설명을 입력하고 "만들기"를 클릭하세요.
+                6. 권한 설정 단계에서 "편집자" 역할을 선택하고 "계속"을 클릭하세요.
+                7. 완료를 클릭하세요.
+                
+                #### 2. 서비스 계정 키 생성하기
+                1. 방금 생성한 서비스 계정을 클릭하세요.
+                2. "키" 탭으로 이동하세요.
+                3. "키 추가" > "새 키 만들기"를 클릭하세요.
+                4. JSON 키 유형을 선택하고 "만들기"를 클릭하세요.
+                5. JSON 키 파일이 컴퓨터에 다운로드됩니다. 이 파일은 안전하게 보관하세요.
+                
+                #### 3. 구글 스프레드시트 생성 및 공유하기
+                1. [Google Sheets](https://sheets.google.com/)에서 새 스프레드시트를 생성하세요.
+                2. 스프레드시트의 URL에서 ID를 복사하세요. 
+                   (예: `https://docs.google.com/spreadsheets/d/`**여기가 스프레드시트 ID**`/edit`)
+                3. 스프레드시트의 "공유" 버튼을 클릭하세요.
+                4. 서비스 계정 이메일 주소(예: `something@project-id.iam.gserviceaccount.com`)를 추가하고, 
+                   "편집자" 권한을 부여하세요.
+                
+                #### 4. Streamlit Secrets 설정하기
+                1. 프로젝트 루트 디렉토리에 `.streamlit` 폴더를 생성하세요.
+                2. 그 안에 `secrets.toml` 파일을 생성하세요.
+                3. 다음 내용을 추가하세요 (다운로드한 JSON 키 내용과 스프레드시트 ID를 사용):
                 
                 ```toml
                 [gcp_service_account]
                 type = "service_account"
                 project_id = "your-project-id"
                 private_key_id = "key-id"
-                private_key = "-----BEGIN PRIVATE KEY-----\nPrivateKeyContents\n-----END PRIVATE KEY-----\n"
+                private_key = "-----BEGIN PRIVATE KEY-----\\nPrivateKeyContents\\n-----END PRIVATE KEY-----\\n"
                 client_email = "service-account-email@project-id.iam.gserviceaccount.com"
                 client_id = "client-id"
                 auth_uri = "https://accounts.google.com/o/oauth2/auth"
@@ -215,14 +283,19 @@ def intro_page():
                 client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/service-account-email%40project-id.iam.gserviceaccount.com"
                 
                 # 스프레드시트 ID 설정
-                spreadsheet_id = "your-spreadsheet-id"
+                spreadsheet_id = "your-spreadsheet-id-here"
+                
+                # Gemini API 키 설정
+                GOOGLE_API_KEY = "your-gemini-api-key-here"
                 ```
                 
-                4. 서비스 계정 이메일을 스프레드시트 편집자로 공유하세요.
+                > ⚠️ 주의: `private_key` 값은 `\\n`을 사용하여 실제 개행을 이스케이프 처리해야 합니다.
+                
+                설정이 완료되면 애플리케이션을 다시 시작하세요.
                 """)
         except Exception as e:
             st.error(f"API 연결 상태 확인 중 오류 발생: {str(e)}")
-            st.info("계속해서 시스템을 사용할 수 있지만, 일부 기능이 제한될 수 있습니다.")
+            st.info("오류를 해결하려면 개발자에게 문의하세요.")
     
     col1, col2 = st.columns(2)
     

@@ -23,19 +23,32 @@ SCOPES = [
 def connect_to_sheets():
     """구글 스프레드시트에 연결합니다."""
     if not gspread_imported:
-        st.error("구글 시트 연결에 필요한 패키지가 설치되지 않았습니다. 'pip install gspread google-auth' 명령으로 설치해주세요.")
+        error_msg = "구글 시트 연결에 필요한 패키지가 설치되지 않았습니다. 'pip install gspread google-auth' 명령으로 설치해주세요."
+        st.error(error_msg)
+        print(error_msg)
         return None
     
     try:
+        print("구글 스프레드시트 연결 시도 중...")
+        
+        # .streamlit/secrets.toml 파일 존재 확인
+        if not hasattr(st, 'secrets') or not st.secrets:
+            error_msg = "secrets.toml 파일이 없거나 접근할 수 없습니다. .streamlit 폴더에 secrets.toml 파일을 생성해주세요."
+            st.error(error_msg)
+            print(error_msg)
+            return None
+        
         # .streamlit/secrets.toml 파일에서 인증 정보 확인
         if "gcp_service_account" not in st.secrets:
-            st.error("구글 서비스 계정 정보가 누락되었습니다. .streamlit/secrets.toml 파일에 gcp_service_account를 설정해주세요.")
-            print("구글 서비스 계정 정보가 누락되었습니다.")
+            error_msg = "구글 서비스 계정 정보가 누락되었습니다. .streamlit/secrets.toml 파일에 gcp_service_account를 설정해주세요."
+            st.error(error_msg)
+            print(error_msg)
             return None
             
         if "spreadsheet_id" not in st.secrets:
-            st.error("스프레드시트 ID가 누락되었습니다. .streamlit/secrets.toml 파일에 spreadsheet_id를 설정해주세요.")
-            print("스프레드시트 ID가 누락되었습니다.")
+            error_msg = "스프레드시트 ID가 누락되었습니다. .streamlit/secrets.toml 파일에 spreadsheet_id를 설정해주세요."
+            st.error(error_msg)
+            print(error_msg)
             return None
         
         # 서비스 계정 정보 확인
@@ -45,36 +58,52 @@ def connect_to_sheets():
         
         if missing_fields:
             missing_fields_str = ", ".join(missing_fields)
-            st.error(f"서비스 계정 정보에 필수 필드가 누락되었습니다: {missing_fields_str}")
-            print(f"서비스 계정 정보에 필수 필드가 누락되었습니다: {missing_fields_str}")
+            error_msg = f"서비스 계정 정보에 필수 필드가 누락되었습니다: {missing_fields_str}"
+            st.error(error_msg)
+            print(error_msg)
             return None
+        
+        # 개행 문자 확인 - 가장 일반적인 오류 중 하나
+        if "private_key" in service_account_info:
+            if "\\n" not in service_account_info["private_key"] and "\n" not in service_account_info["private_key"]:
+                warning_msg = "private_key에 개행 문자가 없습니다. \\n 또는 실제 개행이 포함되어 있는지 확인하세요."
+                st.warning(warning_msg)
+                print(warning_msg)
             
         try:
+            print("서비스 계정 인증 시도 중...")
             # API 인증
             credentials = Credentials.from_service_account_info(
                 service_account_info,
                 scopes=SCOPES
             )
             gc = gspread.authorize(credentials)
+            print("서비스 계정 인증 성공")
             
             # 스프레드시트 열기
             try:
+                print(f"스프레드시트 열기 시도. ID: {st.secrets['spreadsheet_id']}")
                 sheet = gc.open_by_key(st.secrets["spreadsheet_id"])
-                print(f"스프레드시트 ID로 열기 성공: {st.secrets['spreadsheet_id']}")
+                print(f"스프레드시트 '{sheet.title}' 열기 성공!")
             except gspread.exceptions.APIError as e:
                 error_message = str(e)
                 if "404" in error_message:
-                    st.error(f"스프레드시트를 찾을 수 없습니다. ID를 확인해주세요: {st.secrets['spreadsheet_id']}")
-                    print(f"스프레드시트를 찾을 수 없습니다: {error_message}")
+                    error_msg = f"스프레드시트를 찾을 수 없습니다. ID를 확인해주세요: {st.secrets['spreadsheet_id']}"
+                    st.error(error_msg)
+                    print(error_msg)
+                    print(f"세부 오류: {error_message}")
                     return None
                 elif "403" in error_message:
                     client_email = service_account_info.get("client_email", "알 수 없음")
-                    st.error(f"스프레드시트 접근 권한이 없습니다. 서비스 계정({client_email})에 편집 권한을 부여해주세요.")
-                    print(f"스프레드시트 접근 권한이 없습니다: {error_message}")
+                    error_msg = f"스프레드시트 접근 권한이 없습니다. 서비스 계정({client_email})에 편집 권한을 부여해주세요."
+                    st.error(error_msg)
+                    print(error_msg)
+                    print(f"세부 오류: {error_message}")
                     return None
                 else:
-                    st.error(f"스프레드시트 열기 오류: {error_message}")
-                    print(f"스프레드시트 열기 오류: {error_message}")
+                    error_msg = f"스프레드시트 열기 오류: {error_message}"
+                    st.error(error_msg)
+                    print(error_msg)
                     return None
             
             # 필수 워크시트 확인 및 생성
@@ -105,34 +134,41 @@ def connect_to_sheets():
                                 new_ws.append_row(headers)
                                 print(f"워크시트 '{ws_name}' 생성 및 헤더 추가 완료")
                         except Exception as ws_error:
-                            st.warning(f"워크시트 '{ws_name}' 생성 중 오류: {str(ws_error)}")
-                            print(f"워크시트 '{ws_name}' 생성 중 오류: {str(ws_error)}")
+                            warning_msg = f"워크시트 '{ws_name}' 생성 중 오류: {str(ws_error)}"
+                            st.warning(warning_msg)
+                            print(warning_msg)
                 
                 # 연결 성공 로그
-                print(f"구글 스프레드시트 '{sheet.title}'에 성공적으로 연결되었습니다.")
+                success_msg = f"구글 스프레드시트 '{sheet.title}'에 성공적으로 연결되었습니다."
+                print(success_msg)
                 return sheet
             except Exception as ws_error:
-                st.error(f"워크시트 관리 중 오류 발생: {str(ws_error)}")
-                print(f"워크시트 관리 중 오류 발생: {str(ws_error)}")
+                error_msg = f"워크시트 관리 중 오류 발생: {str(ws_error)}"
+                st.error(error_msg)
+                print(error_msg)
                 return None
         except Exception as auth_error:
-            st.error(f"인증 과정에서 오류 발생: {str(auth_error)}")
-            print(f"인증 과정에서 오류 발생: {str(auth_error)}")
+            error_msg = f"인증 과정에서 오류 발생: {str(auth_error)}"
+            st.error(error_msg)
+            print(error_msg)
             return None
     except Exception as e:
-        st.error(f"구글 스프레드시트 연결 오류: {str(e)}")
-        print(f"구글 스프레드시트 연결 오류: {str(e)}")
+        error_msg = f"구글 스프레드시트 연결 오류: {str(e)}"
+        st.error(error_msg)
+        print(error_msg)
         return None
 
 def get_worksheet_records(sheet, worksheet_name):
     """특정 워크시트의 모든 레코드를 가져옵니다."""
     if not sheet:
+        print("시트 객체가 없어 워크시트 레코드를 가져올 수 없습니다.")
         return []
     
     try:
         worksheet = sheet.worksheet(worksheet_name)
         # 전체 레코드 가져오기
         records = worksheet.get_all_records()
+        print(f"워크시트 '{worksheet_name}'에서 {len(records)}개의 레코드를 가져왔습니다.")
         return records
     except Exception as e:
         print(f"워크시트 '{worksheet_name}' 데이터 불러오기 실패: {str(e)}")
@@ -143,10 +179,12 @@ def get_random_problem(student_id=None, student_grade=None, problem_type=None):
     """
     구글 스프레드시트에서 학생 수준에 맞는 문제를 가져옵니다.
     student_id가 제공되면 학생의 약점에 기반한 문제를 선택합니다.
+    연결 실패 시 더미 문제를 제공합니다.
     """
     # 스프레드시트 연결
     sheet = connect_to_sheets()
     if not sheet:
+        print(f"구글 시트 연결 실패. 학년 '{student_grade}'에 맞는 더미 문제를 생성합니다.")
         return get_dummy_problem(student_grade)
     
     try:
@@ -155,6 +193,7 @@ def get_random_problem(student_id=None, student_grade=None, problem_type=None):
         all_problems = problems_ws.get_all_records()
         
         if not all_problems:
+            print("문제 워크시트가 비어 있습니다. 더미 문제를 생성합니다.")
             return get_dummy_problem(student_grade)
         
         # 학생 약점 분석 (student_id가 제공된 경우)
@@ -213,6 +252,7 @@ def get_random_problem(student_id=None, student_grade=None, problem_type=None):
         
         # 유효한 문제가 없으면 더미 문제 반환
         if not valid_problems:
+            print(f"학년 '{student_grade}'에 맞는 유효한 문제가 없습니다. 더미 문제를 생성합니다.")
             return get_dummy_problem(student_grade)
         
         # 약점 기반 문제 선택 (약점이 있는 경우)
@@ -233,10 +273,14 @@ def get_random_problem(student_id=None, student_grade=None, problem_type=None):
         
         # 약점 기반 문제가 있으면 그 중에서 무작위 선택 (80% 확률)
         if weakness_based_problems and random.random() < 0.8:
-            return random.choice(weakness_based_problems)
+            selected_problem = random.choice(weakness_based_problems)
+            print(f"약점 기반 문제 선택: 문제ID {selected_problem.get('문제ID')}")
+            return selected_problem
         
         # 그 외의 경우는 모든 유효한 문제 중에서 무작위 선택
-        return random.choice(valid_problems)
+        selected_problem = random.choice(valid_problems)
+        print(f"무작위 문제 선택: 문제ID {selected_problem.get('문제ID')}")
+        return selected_problem
         
     except Exception as e:
         print(f"문제 불러오기 오류: {str(e)}")
