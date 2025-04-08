@@ -110,6 +110,7 @@ def check_api_connections():
     try:
         if "GOOGLE_API_KEY" in st.secrets:
             try:
+                genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
                 model = genai.GenerativeModel('gemini-1.5-flash')
                 # 간단한 프롬프트로 테스트
                 response = model.generate_content("Hello")
@@ -678,11 +679,15 @@ def exam_page():
             st.session_state.exam_start_time = time.time()
             
             # 시험 문제 로드
-            st.session_state.exam_problems = load_exam_problems(
-                st.session_state.student_id, 
-                st.session_state.student_grade, 
-                20
-            )
+            try:
+                st.session_state.exam_problems = load_exam_problems(
+                    st.session_state.student_id, 
+                    st.session_state.student_grade, 
+                    20
+                )
+            except Exception as e:
+                st.error(f"문제 로드 중 오류: {str(e)}")
+                st.session_state.exam_problems = []
             
             # 문제 로드 확인
             if not st.session_state.exam_problems:
@@ -726,6 +731,7 @@ def exam_page():
                 saved_answer = st.session_state.student_answers.get(problem_id, {}).get("제출답안", "")
                 
                 # 보기가 있는 경우 라디오 버튼으로 표시
+                has_options = False
                 if "보기정보" in problem and problem["보기정보"]:
                     options = []
                     option_texts = {}
@@ -733,34 +739,48 @@ def exam_page():
                     # 보기 중복 확인을 위한 집합
                     seen_options_text = set()
                     
-                    for key, text in problem["보기정보"].items():
-                        # 중복된 보기 텍스트 제거
-                        if text and text not in seen_options_text:
-                            options.append(key)
-                            option_texts[key] = text
-                            seen_options_text.add(text)
-                    
-                    # 보기가 있는지 확인
-                    if options:
-                        # 선택 라디오 버튼
-                        st.markdown("### 정답 선택:")
-                        selected = st.radio(
-                            f"문제 {idx}",
-                            options,
-                            format_func=lambda x: f"{x}: {option_texts[x]}",
-                            index=options.index(saved_answer) if saved_answer in options else None,  # 저장된 답안이 없으면 선택하지 않음
-                            key=f"radio_{problem_id}",
-                            label_visibility="collapsed"
-                        )
+                    try:
+                        for key, text in problem["보기정보"].items():
+                            # 중복된 보기 텍스트 제거
+                            if text and text not in seen_options_text:
+                                options.append(key)
+                                option_texts[key] = text
+                                seen_options_text.add(text)
                         
-                        # 학생 답안 저장
-                        if selected is not None:  # 선택된 경우에만 저장
-                            if problem_id not in st.session_state.student_answers:
-                                st.session_state.student_answers[problem_id] = problem.copy()
-                            st.session_state.student_answers[problem_id]["제출답안"] = selected
-                    else:
-                        st.error("이 문제에 대한 보기가 없습니다.")
-                else:
+                        # 보기가 있는지 확인
+                        if options:
+                            has_options = True
+                            # 선택 라디오 버튼
+                            st.markdown("### 정답 선택:")
+                            
+                            # 인덱스 확인 로직 개선
+                            index = None
+                            if saved_answer in options:
+                                index = options.index(saved_answer)
+                            
+                            selected = st.radio(
+                                f"문제 {idx}",
+                                options,
+                                format_func=lambda x: f"{x}: {option_texts[x]}",
+                                index=index,  # 저장된 답안이 없으면 선택하지 않음
+                                key=f"radio_{problem_id}",
+                                label_visibility="collapsed"
+                            )
+                            
+                            # 학생 답안 저장
+                            if selected is not None:  # 선택된 경우에만 저장
+                                if problem_id not in st.session_state.student_answers:
+                                    st.session_state.student_answers[problem_id] = problem.copy()
+                                st.session_state.student_answers[problem_id]["제출답안"] = selected
+                    except Exception as e:
+                        st.error(f"보기 처리 중 오류: {str(e)}")
+                
+                # 보기가 없거나 처리 오류면 텍스트 입력으로 대체
+                if not has_options:
+                    # 선택형이지만 보기 정보가 없는 경우
+                    if problem.get("문제유형") == "객관식":
+                        st.error("이 문제에 대한 보기 정보가 없습니다. 직접 답안을 입력해주세요.")
+                    
                     # 주관식인 경우 텍스트 입력
                     st.markdown("### 답안 입력:")
                     answer = st.text_input(
