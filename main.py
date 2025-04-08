@@ -294,225 +294,117 @@ def student_dashboard():
         st.session_state.page = "intro"
         st.rerun()
 
-def load_exam_problems():
-    """학생 학년에 맞는 시험 문제 20개를 로드합니다."""
-    if 'exam_problems' not in st.session_state or not st.session_state.exam_problems or len(st.session_state.exam_problems) < 20:
-        st.session_state.exam_problems = []
-        available_problems_all = []
+def load_exam_problems(student_id, student_grade, problem_count=20):
+    """
+    시험에 사용할 문제를 학생 학년과 다양한 유형을 고려하여 로드합니다.
+    """
+    problems = []
+    used_problem_ids = set()
+    attempts = 0
+    max_attempts = 100  # 최대 시도 횟수 (문제가 충분하지 않은 경우 무한 루프 방지)
+    
+    sheet = connect_to_sheets()
+    if not sheet:
+        st.error("Google Sheets 연결에 실패했습니다.")
+        return problems
+    
+    # 문제 워크시트에서 모든 문제 가져오기
+    try:
+        problems_ws = sheet.worksheet("problems")
+        all_problems = problems_ws.get_all_records()
+    except Exception as e:
+        st.error(f"문제 데이터를 가져오는데 실패했습니다: {str(e)}")
+        return problems
+    
+    # 학년에 맞는 문제만 필터링
+    valid_problems = []
+    for p in all_problems:
+        if ("문제ID" in p and "학년" in p and "문제내용" in p and "정답" in p and 
+            p["학년"] == student_grade.replace("학년", "").strip()):
+            valid_problems.append(p)
+    
+    if not valid_problems:
+        st.warning(f"{student_grade} 학년에 맞는 문제가 없습니다. 모든 문제를 사용합니다.")
+        valid_problems = all_problems
+    
+    # 문제 유형별로 분류
+    problem_types = {}
+    for p in valid_problems:
+        if "문제유형" in p and p["문제유형"]:
+            ptype = p["문제유형"]
+            if ptype not in problem_types:
+                problem_types[ptype] = []
+            problem_types[ptype].append(p)
+    
+    # 각 유형별로 골고루 문제 선택
+    remaining_count = problem_count
+    if problem_types:
+        # 각 유형별로 최소 문제 수 계산
+        type_counts = {}
+        min_per_type = max(1, problem_count // len(problem_types))
         
-        try:
-            # 학생 취약점 기반 문제 추천
-            if hasattr(st.session_state, 'student_id'):
-                # 문제 목록 가져오기
-                sheet = connect_to_sheets()
-                if sheet:
-                    try:
-                        worksheet = sheet.worksheet("problems")
-                        # 수정된 래퍼 함수 사용
-                        all_problems = get_worksheet_records(worksheet)
-                        
-                        if all_problems:
-                            # 학생 수준에 맞는 문제 필터링
-                            student_grade = st.session_state.student_grade
-                            available_problems_all = [p for p in all_problems if p["학년"] == student_grade]
-                            
-                            # 문제가 없으면 더미 문제로 대체
-                            if not available_problems_all:
-                                # 기본 더미 문제 생성
-                                for i in range(20):
-                                    dummy_problem = create_unique_dummy_problem(i)
-                                    # 학년 수정 - 학생 학년에 맞추기
-                                    dummy_problem["학년"] = student_grade
-                                    st.session_state.exam_problems.append(dummy_problem)
-                                
-                                return st.session_state.exam_problems
-                            
-                            # 중복 처리를 위해 문제 ID 기준으로 중복 제거
-                            unique_problem_ids = set()
-                            available_problems = []
-                            for p in available_problems_all:
-                                if p["문제ID"] not in unique_problem_ids:
-                                    available_problems.append(p)
-                                    unique_problem_ids.add(p["문제ID"])
-                            
-                            if available_problems:
-                                # 사용 가능한 문제가 20개 미만이면 모두 사용
-                                if len(available_problems) <= 20:
-                                    st.session_state.exam_problems = available_problems
-                                else:
-                                    # 중복되지 않는 문제 20개 선택
-                                    selected_problems = []
-                                    used_problem_ids = set()  # 이미 선택된 문제 ID 추적
-                                    
-                                    # 취약점 기반 문제 5개 선택
-                                    for _ in range(min(5, len(available_problems))):
-                                        # 취약점 기반 문제 추천
-                                        for attempt in range(10):  # 최대 10번 시도
-                                            problem = get_problem_for_student(
-                                                st.session_state.student_id,
-                                                available_problems
-                                            )
-                                            
-                                            # 이미 선택된 문제가 아닌지 확인
-                                            if problem and problem["문제ID"] not in used_problem_ids:
-                                                selected_problems.append(problem)
-                                                used_problem_ids.add(problem["문제ID"])
-                                                break
-                                    
-                                    # 나머지 문제는 랜덤 선택
-                                    remaining_problems = [p for p in available_problems if p["문제ID"] not in used_problem_ids]
-                                    import random
-                                    random.shuffle(remaining_problems)
-                                    
-                                    # 20개가 될 때까지 추가
-                                    for problem in remaining_problems:
-                                        if len(selected_problems) >= 20:
-                                            break
-                                        selected_problems.append(problem)
-                                        used_problem_ids.add(problem["문제ID"])
-                                    
-                                    st.session_state.exam_problems = selected_problems
-                    except Exception as e:
-                        st.error(f"문제 로드 중 오류 발생: {str(e)}")
-        except Exception as e:
-            st.error(f"문제 로드 중 오류 발생: {str(e)}")
+        for ptype, type_problems in problem_types.items():
+            # 유형별 문제 수와 최소 요구 수 중 작은 값 선택
+            type_counts[ptype] = min(len(type_problems), min_per_type)
+            remaining_count -= type_counts[ptype]
         
-        # 문제가 부족하면 더미 문제로 채우기
-        while len(st.session_state.exam_problems) < 20:
-            # 현재 인덱스 기준 고유 더미 문제 생성
-            dummy_idx = len(st.session_state.exam_problems)
-            dummy_problem = create_unique_dummy_problem(dummy_idx)
+        # 유형별로 문제 선택
+        for ptype, count in type_counts.items():
+            type_problems = problem_types[ptype]
+            # 무작위로 선택
+            selected = random.sample(type_problems, count) if len(type_problems) > count else type_problems
             
-            # 학년 수정 - 학생 학년에 맞추기
-            if hasattr(st.session_state, 'student_grade'):
-                dummy_problem["학년"] = st.session_state.student_grade
-                
-            st.session_state.exam_problems.append(dummy_problem)
+            for p in selected:
+                if p["문제ID"] not in used_problem_ids:
+                    problems.append(process_problem(p))
+                    used_problem_ids.add(p["문제ID"])
     
-    # 항상 최대 20개만 반환 (혹시 20개 이상인 경우)
-    return st.session_state.exam_problems[:20]
+    # 나머지 문제 수는 무작위로 선택
+    remaining_valid_problems = [p for p in valid_problems if p["문제ID"] not in used_problem_ids]
+    
+    while len(problems) < problem_count and remaining_valid_problems and attempts < max_attempts:
+        random_problem = random.choice(remaining_valid_problems)
+        if random_problem["문제ID"] not in used_problem_ids:
+            problems.append(process_problem(random_problem))
+            used_problem_ids.add(random_problem["문제ID"])
+            remaining_valid_problems.remove(random_problem)
+        attempts += 1
+    
+    # 충분한 문제가 없는 경우 더미 문제로 채우기
+    while len(problems) < problem_count:
+        dummy_problem = get_dummy_problem(student_grade)
+        dummy_problem["문제ID"] = f"dummy-{uuid.uuid4()}"  # 고유 ID 생성
+        if dummy_problem["문제ID"] not in used_problem_ids:
+            problems.append(dummy_problem)
+            used_problem_ids.add(dummy_problem["문제ID"])
+    
+    return problems[:problem_count]  # 최대 problem_count개 반환
 
-# 문제 번호에 따라 다른 더미 문제를 생성하는 헬퍼 함수
-def create_unique_dummy_problem(index):
-    """문제 번호에 따라 고유한 더미 문제를 생성합니다"""
-    import random
+def process_problem(problem):
+    """문제 데이터를 정리하여 반환합니다."""
+    processed = {
+        "문제ID": problem["문제ID"],
+        "과목": problem.get("과목", "영어"),
+        "학년": problem.get("학년", ""),
+        "문제유형": problem.get("문제유형", "객관식"),
+        "난이도": problem.get("난이도", "중"),
+        "문제내용": problem["문제내용"],
+        "정답": problem["정답"],
+        "키워드": problem.get("키워드", ""),
+        "해설": problem.get("해설", "")
+    }
     
-    # 문제 유형 목록
-    question_templates = [
-        "Choose the correct verb form to complete the sentence: {subject} ___ {object} {time_expression}.",
-        "Select the appropriate word to fill in the blank: {subject} ___ {object}.",
-        "Pick the correct word to complete: {subject} ___ {prepositional_phrase}.",
-        "Find the grammatically correct option: {subject} ___ {verb_phrase}.",
-        "Which is the correct form? {subject} ___ {object}."
-    ]
+    # 보기 정보 처리
+    processed["보기정보"] = {}
+    for i in range(1, 6):
+        option_key = f"보기{i}"
+        if option_key in problem and problem[option_key]:
+            processed["보기정보"][option_key] = problem[option_key]
     
-    # 주어/문장 패턴 다양화
-    subjects = [
-        "The students", "They", "The teachers", "We", "The children", 
-        "My friends", "The man", "The woman", "The cat", "The dog",
-        "The boy", "The girl", "The people", "Everyone", "Somebody"
-    ]
-    
-    verbs = [
-        "do", "write", "read", "finish", "complete", 
-        "submit", "prepare", "study for", "see", "hear"
-    ]
-    
-    objects = [
-        "homework", "assignments", "tests", "exams", "projects", 
-        "essays", "presentations", "books", "lessons", "classes"
-    ]
-    
-    time_expressions = [
-        "every day", "last week", "tomorrow", "right now", "next month",
-        "yesterday", "currently", "regularly", "on weekends", "during summer"
-    ]
-    
-    prepositions = [
-        "to school", "at home", "in the classroom", "with friends", "by bus",
-        "around the park", "through the forest", "under the bridge", "near the lake", "behind the building"
-    ]
-    
-    # 고유한 문제 생성을 위한 시드 설정
-    # 같은 인덱스에 항상 같은 랜덤값이 나오도록 설정
-    random.seed(index)
-    
-    # 선택된 템플릿
-    template_idx = index % len(question_templates)
-    template = question_templates[template_idx]
-    
-    # 문장 요소 선택
-    subject = subjects[index % len(subjects)]
-    verb = verbs[index % len(verbs)]
-    obj = objects[(index * 3) % len(objects)]
-    time_expr = time_expressions[(index * 7) % len(time_expressions)]
-    prep_phrase = prepositions[(index * 5) % len(prepositions)]
-    
-    # 문제 내용 생성
-    question_content = template.format(
-        subject=subject,
-        object=obj,
-        time_expression=time_expr,
-        prepositional_phrase=prep_phrase,
-        verb_phrase=f"{verb} {obj}"
-    )
-    
-    # 객관식 보기 생성 (주관식/객관식 번갈아가며)
-    is_objective = (index % 2 == 0)
-    
-    if is_objective:
-        # 객관식 문제 생성 - 고유한 보기 생성
-        options = ["goes", "go", "going", "gone", "went"]
-        answer_idx = index % 5  # 정답 인덱스 (0부터 4까지 반복)
-        
-        # 인덱스를 기반으로 보기 순서 섞기
-        shuffled_options = options.copy()
-        random.shuffle(shuffled_options)
-        
-        # 문제에서 사용할 정답 결정
-        correct_option = f"보기{answer_idx + 1}"
-        
-        # 문제 객체 생성
-        dummy_problem = {
-            "문제ID": f"dummy-{index}-{uuid.uuid4()}",
-            "과목": "영어",
-            "학년": "중학교 1학년",
-            "문제유형": "객관식",
-            "난이도": ["하", "중", "상"][index % 3],
-            "문제내용": question_content,
-            "보기1": shuffled_options[0],
-            "보기2": shuffled_options[1],
-            "보기3": shuffled_options[2],
-            "보기4": shuffled_options[3],
-            "보기5": shuffled_options[4],
-            "정답": correct_option,
-            "키워드": ["동사 활용", "시제", "문법", "어휘", "구문"][index % 5],
-            "해설": f"문제의 주어가 '{subject}'이므로 적절한 동사 형태는 '{shuffled_options[answer_idx]}'입니다."
-        }
-    else:
-        # 주관식 문제 생성
-        answers = ["goes", "go", "going", "gone", "went"]
-        answer = answers[index % 5]
-        
-        dummy_problem = {
-            "문제ID": f"dummy-{index}-{uuid.uuid4()}",
-            "과목": "영어",
-            "학년": "중학교 1학년",
-            "문제유형": "주관식",
-            "난이도": ["하", "중", "상"][index % 3],
-            "문제내용": question_content,
-            "정답": answer,
-            "키워드": ["동사 활용", "시제", "문법", "어휘", "구문"][index % 5],
-            "해설": f"문제의 주어가 '{subject}'이므로 적절한 동사 형태는 '{answer}'입니다."
-        }
-    
-    # 시드 초기화 (다른 코드에 영향을 주지 않도록)
-    random.seed()
-    
-    return dummy_problem
+    return processed
 
 def exam_page():
-    """시험 페이지 - 20문제를 한 페이지에 모두 표시"""
+    """시험 페이지 - 모든 문제를 한 페이지에 표시합니다."""
     if not hasattr(st.session_state, 'student_id') or st.session_state.student_id is None:
         st.error("로그인 정보가 없습니다.")
         if st.button("로그인 페이지로 돌아가기"):
@@ -520,141 +412,118 @@ def exam_page():
             st.rerun()
         return
     
-    # 시간 제한 설정
-    if 'start_time' not in st.session_state:
-        st.session_state.start_time = time.time()
-    
-    if 'time_limit' not in st.session_state:
-        st.session_state.time_limit = 50 * 60  # 50분(초 단위)
-    
-    if 'student_answers' not in st.session_state:
+    # 시험 상태 확인
+    if 'exam_initialized' not in st.session_state or not st.session_state.exam_initialized:
+        st.session_state.exam_initialized = True
         st.session_state.student_answers = {}
-    
-    # 현재 시간으로 경과 시간 계산
-    elapsed_time = time.time() - st.session_state.start_time
-    remaining_time = max(0, st.session_state.time_limit - elapsed_time)
-    
-    # 남은 시간 표시
-    mins, secs = divmod(int(remaining_time), 60)
-    time_str = f"{mins:02d}:{secs:02d}"
-    
-    # 제한 시간이 끝났는지 확인
-    if remaining_time <= 0:
-        st.success("시험 시간이 종료되었습니다! 시험지를 제출해주세요.")
+        st.session_state.exam_answered_count = 0
+        st.session_state.exam_start_time = time.time()
+        st.session_state.exam_time_limit = 50 * 60  # 50분
         
-        if st.button("시험지 제출하기", use_container_width=True, key="final_submit_timeout"):
-            # 시험 결과 처리
-            st.session_state.exam_completed = True
-            st.session_state.page = "exam_result"
-            st.rerun()
-        
-        if st.button("대시보드로 돌아가기", key="back_to_dashboard_timeout"):
-            st.session_state.page = "student_dashboard"
-            st.rerun()
-        
-        return
+        # 시험 문제 로드
+        st.session_state.exam_problems = load_exam_problems(
+            st.session_state.student_id, 
+            st.session_state.student_grade, 
+            20
+        )
     
-    st.title(f"시험지")
+    # 헤더 표시
+    st.title("시험지")
     
-    # 진행 상황 표시
-    st.markdown(f"**남은 시간**: {time_str}")
-    st.markdown(f"**학생**: {st.session_state.get('student_name', '학생')} | **학년**: {st.session_state.get('student_grade', 'N/A')} | **실력등급**: {st.session_state.get('student_level', 'N/A')}")
+    # 남은 시간 계산
+    elapsed_time = time.time() - st.session_state.exam_start_time
+    remaining_time = max(0, st.session_state.exam_time_limit - elapsed_time)
+    minutes, seconds = divmod(int(remaining_time), 60)
     
-    # 대시보드로 돌아가기 버튼
-    if st.button("← 대시보드", key="back_to_dashboard_btn"):
-        st.session_state.page = "student_dashboard"
+    # 학생 정보 및 남은 시간 표시
+    st.markdown(f"남은 시간: {minutes:02d}:{seconds:02d}")
+    st.markdown(f"학생: {st.session_state.student_name} | 학년: {st.session_state.student_grade} | 실력등급: {st.session_state.student_level}")
+    
+    # 남은 시간이 0이면 자동 제출
+    if remaining_time <= 0 and 'exam_submitted' not in st.session_state:
+        st.session_state.exam_submitted = True
+        st.session_state.page = "exam_score"
         st.rerun()
     
-    # 문제 로드
-    with st.spinner("문제를 불러오는 중..."):
-        problems = load_exam_problems()
+    # 시험 진행 상태
+    st.info(f"총 20개의 문제가 있습니다. 모든 문제를 풀고 제출하세요.")
     
-    if not problems or len(problems) < 20:
-        st.warning(f"시스템에서 학년에 맞는 문제를 충분히 찾지 못했습니다. 시험은 일부 기본 문제로 대체됩니다.")
-    
-    # 문제 수 확인 및 표시
-    st.info(f"총 {len(problems)}개의 문제가 있습니다. 모든 문제를 풀고 제출하세요.")
-    
-    # 버튼을 상단에도 표시
-    if st.button("시험지 제출하기", use_container_width=True, key="submit_top"):
-        # 모든 답변 제출
-        st.session_state.exam_completed = True
-        st.session_state.page = "exam_result"
-        st.rerun()
-    
-    # 문제 폼 - 모든 문제를 한 페이지에 표시
-    for idx, problem in enumerate(problems, 1):
-        with st.container(border=True):
-            st.markdown(f"### 문제 {idx}/20")
-            st.markdown(f"**과목**: {problem['과목']} | **학년**: {problem['학년']} | **유형**: {problem['문제유형']} | **난이도**: {problem['난이도']}")
+    # 폼 생성
+    with st.form("exam_form"):
+        for idx, problem in enumerate(st.session_state.exam_problems, 1):
+            # 문제 ID
+            problem_id = problem["문제ID"]
             
-            # 문제 내용
-            st.markdown(problem.get("문제내용", "문제 내용을 불러올 수 없습니다."))
-            
-            # 보기가 있는지 확인
-            has_options = False
-            options = []
-            seen_options_text = set()  # 중복 보기 텍스트 추적
-            
-            for i in range(1, 6):
-                option_key = f"보기{i}"
-                if option_key in problem and problem[option_key] and problem[option_key].strip():
-                    option_text = problem[option_key].strip()
-                    
-                    # 중복된 보기 텍스트 건너뛰기
-                    if option_text not in seen_options_text:
-                        has_options = True
-                        options.append((option_key, option_text))
-                        seen_options_text.add(option_text)
-            
-            # 문제 ID를 키로 사용
-            problem_id = problem['문제ID']
-            answer_key = f"answer_{problem_id}"
-            
-            if has_options:
-                # 객관식 문제
-                selected_option = st.radio(
-                    "정답 선택:",
-                    options=options,
-                    format_func=lambda x: f"{x[0]}: {x[1]}",
-                    key=f"radio_{problem_id}",
-                    index=None
-                )
+            # 문제 박스 생성
+            with st.container(border=True):
+                # 문제 헤더
+                st.markdown(f"## 문제 {idx}/20")
+                st.markdown(f"과목: {problem['과목']} | 학년: {problem['학년']} | 유형: {problem['문제유형']} | 난이도: {problem['난이도']}")
                 
-                if selected_option:
-                    st.session_state[answer_key] = selected_option[0]
-            else:
-                # 주관식 문제
-                text_answer = st.text_input(
-                    "답 입력:",
-                    key=f"text_{problem_id}",
-                    value=st.session_state.get(f"text_{problem_id}", "")
-                )
-                if text_answer.strip():
-                    st.session_state[answer_key] = text_answer.strip()
-    
-    # 제출 버튼
-    if st.button("시험지 제출하기", use_container_width=True, key="submit_bottom"):
-        # 모든 답변 저장
-        for problem in problems:
-            problem_id = problem['문제ID']
-            answer_key = f"answer_{problem_id}"
-            
-            if answer_key in st.session_state and st.session_state[answer_key]:
-                st.session_state.student_answers[problem_id] = {
-                    '문제': problem.get("문제내용", ""),
-                    '학생답안': st.session_state[answer_key],
-                    '정답': problem.get("정답", ""),
-                    '보기정보': {f"보기{i}": problem.get(f"보기{i}", "") for i in range(1, 6) if f"보기{i}" in problem},
-                    '키워드': problem.get("키워드", ""),
-                    '문제유형': problem.get("문제유형", ""),
-                    '과목': problem.get("과목", ""),
-                    '학년': problem.get("학년", "")
-                }
+                # 문제 내용
+                st.markdown(problem["문제내용"])
+                
+                # 저장된 답안 불러오기
+                saved_answer = st.session_state.student_answers.get(problem_id, {}).get("제출답안", "")
+                
+                # 보기가 있는 경우 라디오 버튼으로 표시
+                if "보기정보" in problem and problem["보기정보"]:
+                    options = []
+                    option_texts = {}
+                    
+                    # 보기 중복 확인을 위한 집합
+                    seen_options_text = set()
+                    
+                    for key, text in problem["보기정보"].items():
+                        # 중복된 보기 텍스트 제거
+                        if text not in seen_options_text:
+                            options.append(key)
+                            option_texts[key] = text
+                            seen_options_text.add(text)
+                    
+                    # 선택 라디오 버튼
+                    st.markdown("### 정답 선택:")
+                    selected = st.radio(
+                        f"문제 {idx}",
+                        options,
+                        format_func=lambda x: f"{x}: {option_texts[x]}",
+                        index=options.index(saved_answer) if saved_answer in options else 0,
+                        key=f"radio_{problem_id}",
+                        label_visibility="collapsed"
+                    )
+                    
+                    # 학생 답안 저장
+                    if problem_id not in st.session_state.student_answers:
+                        st.session_state.student_answers[problem_id] = problem.copy()
+                    st.session_state.student_answers[problem_id]["제출답안"] = selected
+                    
+                else:
+                    # 주관식인 경우 텍스트 입력
+                    st.markdown("### 답안 입력:")
+                    answer = st.text_input(
+                        f"문제 {idx} 답안",
+                        value=saved_answer,
+                        key=f"text_{problem_id}",
+                        max_chars=200
+                    )
+                    
+                    # 학생 답안 저장
+                    if problem_id not in st.session_state.student_answers:
+                        st.session_state.student_answers[problem_id] = problem.copy()
+                    st.session_state.student_answers[problem_id]["제출답안"] = answer
         
-        # 시험 결과 페이지로 이동
-        st.session_state.exam_completed = True
-        st.session_state.page = "exam_result"
+        # 제출 버튼
+        submit_button = st.form_submit_button("시험지 제출하기", use_container_width=True)
+        
+        if submit_button:
+            # 제출 처리
+            st.session_state.exam_submitted = True
+            st.session_state.page = "exam_score"
+            st.rerun()
+    
+    # 대시보드로 돌아가기
+    if st.button("← 대시보드", use_container_width=True):
+        st.session_state.page = "student_dashboard"
         st.rerun()
 
 def my_performance_page():
@@ -696,7 +565,7 @@ def result_page():
     # 문제 정보 표시
     st.markdown(f"**과목**: {problem['과목']} | **학년**: {problem['학년']} | **유형**: {problem['문제유형']} | **난이도**: {problem['난이도']}")
     
-    # 진행 상황 표시
+    # 진행 상태 표시
     if 'problem_count' in st.session_state and 'max_problems' in st.session_state:
         col1, col2 = st.columns(2)
         with col1:
@@ -854,7 +723,7 @@ def exam_result_page():
                     
                     # 모든 답안 채점
                     for problem_id, problem_data in st.session_state.student_answers.items():
-                        student_answer = problem_data['학생답안']
+                        student_answer = problem_data['제출답안']
                         correct_answer = problem_data['정답']
                         
                         # 단답형 또는 객관식 여부 확인
@@ -929,7 +798,7 @@ def exam_result_page():
                     if option_text:
                         st.markdown(f"**{option_key}**: {option_text}")
             
-            st.markdown(f"**제출한 답안**: {problem_data['학생답안']}")
+            st.markdown(f"**제출한 답안**: {problem_data['제출답안']}")
 
 def exam_score_page():
     """시험 점수 결과 페이지"""
@@ -940,10 +809,10 @@ def exam_score_page():
             st.rerun()
         return
     
-    if 'exam_results' not in st.session_state:
-        st.error("시험 결과를 찾을 수 없습니다.")
-        if st.button("대시보드로 돌아가기"):
-            st.session_state.page = "student_dashboard"
+    if 'exam_submitted' not in st.session_state or not st.session_state.exam_submitted:
+        st.warning("시험을 먼저 제출해야 합니다.")
+        if st.button("시험 페이지로 돌아가기"):
+            st.session_state.page = "exam_page"
             st.rerun()
         return
     
@@ -1296,7 +1165,7 @@ def problem_page():
     # 문제 표시
     st.title("문제 풀기")
     
-    # 진행 상황 표시
+    # 진행 상태 표시
     col1, col2 = st.columns(2)
     with col1:
         if 'problem_count' in st.session_state and 'max_problems' in st.session_state:

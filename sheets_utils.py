@@ -300,15 +300,16 @@ def update_student_weakness(student_id, keyword, is_correct):
         print(f"취약점 데이터 업데이트 오류: {e}")
         return False
 
-def get_random_problem(student_id=None):
+def get_random_problem(student_id=None, student_grade=None, problem_type=None):
     """
     Google Sheets에서 문제를 가져옵니다.
     학생ID가 제공되면 취약점에 기반하여 문제를 추천합니다.
+    학년과 문제유형을 지정하면 해당 조건에 맞는 문제만 가져옵니다.
     """
     try:
         sheet = connect_to_sheets()
         if not sheet:
-            return get_dummy_problem()
+            return get_dummy_problem(student_grade)
 
         try:
             # problems 워크시트에서 문제 가져오기
@@ -316,11 +317,11 @@ def get_random_problem(student_id=None):
                 problems_ws = sheet.worksheet("problems")
                 all_data = problems_ws.get_all_records()
             except Exception as e:
-                return get_dummy_problem()
+                return get_dummy_problem(student_grade)
 
             # 데이터 확인 및 처리
             if not all_data:
-                return get_dummy_problem()
+                return get_dummy_problem(student_grade)
 
             # 필수 필드 확인
             required_fields = ["문제ID", "과목", "학년", "문제유형", "난이도", "문제내용", 
@@ -336,7 +337,27 @@ def get_random_problem(student_id=None):
                         valid_problems.append(problem)
 
             if not valid_problems:
-                return get_dummy_problem()
+                return get_dummy_problem(student_grade)
+
+            # 학년으로 필터링 (학년이 제공된 경우)
+            if student_grade and student_grade.strip():
+                grade_filtered_problems = [p for p in valid_problems 
+                                         if p["학년"] == student_grade or 
+                                         p["학년"] == student_grade.replace("학년", "").strip() or
+                                         p["학년"] == student_grade.replace("중", "중학교").strip() or
+                                         p["학년"] == student_grade.replace("고", "고등학교").strip()]
+                
+                # 학년 필터링된 문제가 있으면 사용, 없으면 원래 문제 풀로 계속 진행
+                if grade_filtered_problems:
+                    valid_problems = grade_filtered_problems
+            
+            # 문제 유형으로 필터링 (유형이 제공된 경우)
+            if problem_type and problem_type.strip():
+                type_filtered_problems = [p for p in valid_problems if p["문제유형"] == problem_type]
+                
+                # 유형 필터링된 문제가 있으면 사용, 없으면 원래 문제로 계속 진행
+                if type_filtered_problems:
+                    valid_problems = type_filtered_problems
 
             # 세션 상태 초기화
             if "previous_problems" not in st.session_state:
@@ -357,29 +378,11 @@ def get_random_problem(student_id=None):
             current_problem = None
             
             # 학생 취약점 가져오기 (학생ID가 있는 경우)
-            weaknesses = {}
             if student_id:
-                weaknesses = get_student_weaknesses(student_id)
-            
-            # 취약점이 있고 랜덤 요소를 위해 70% 확률로 취약점 기반 선택
-            if weaknesses and random.random() < 0.7:
-                # 취약점 점수가 높은 순으로 정렬
-                sorted_weaknesses = sorted(weaknesses.items(), key=lambda x: x[1]["취약도"], reverse=True)
-                
-                # 상위 3개 취약 키워드 (또는 그 이하)
-                top_weak_keywords = [kw for kw, _ in sorted_weaknesses[:3]]
-                
-                # 해당 키워드를 포함하는 문제 필터링
-                weak_problems = []
-                for problem in available_problems:
-                    if "키워드" in problem and problem["키워드"]:
-                        keywords = [k.strip() for k in problem["키워드"].split(',')]
-                        if any(kw in top_weak_keywords for kw in keywords):
-                            weak_problems.append(problem)
-                
-                # 취약 키워드 관련 문제가 있으면 그 중에서 선택
-                if weak_problems:
-                    current_problem = random.choice(weak_problems)
+                from student_analytics import get_problem_for_student
+                selected_problem = get_problem_for_student(student_id, available_problems)
+                if selected_problem:
+                    current_problem = selected_problem
             
             # 취약점 기반 선택이 되지 않았으면 일반 랜덤 선택
             if current_problem is None:
@@ -414,21 +417,22 @@ def get_random_problem(student_id=None):
                 "해설": current_problem["해설"]
             }
             
-            # 보기 추가 (있는 경우만)
+            # 보기 정보를 별도 딕셔너리로 구성
+            cleaned_problem["보기정보"] = {}
             for i in range(1, 6):
                 option_key = f"보기{i}"
                 if option_key in current_problem and current_problem[option_key]:
-                    cleaned_problem[option_key] = current_problem[option_key]
+                    cleaned_problem["보기정보"][option_key] = current_problem[option_key]
             
             return cleaned_problem
             
         except Exception as e:
             print(f"문제 가져오기 오류: {e}")
-            return get_dummy_problem()
+            return get_dummy_problem(student_grade)
             
     except Exception as e:
         print(f"문제 가져오기 오류: {e}")
-        return get_dummy_problem()
+        return get_dummy_problem(student_grade)
 
 def save_student_answer(student_id, student_name, problem_id, submitted_answer, score, feedback):
     """
@@ -568,21 +572,274 @@ def get_student_performance(student_id):
         print(f"성적 데이터 가져오기 오류: {e}")
         return None
 
-def get_dummy_problem():
-    """샘플 문제를 반환합니다. (Sheets 연결이 실패할 경우 사용)"""
+def get_dummy_problem(student_grade=None):
+    """
+    샘플 문제를 반환합니다. (Sheets 연결이 실패할 경우 사용)
+    학년 정보가 제공된 경우, 해당 학년에 맞는 샘플 문제를 제공합니다.
+    """
+    # 학년 기본값 설정
+    grade = "중1"
+    if student_grade:
+        grade = student_grade.replace("학년", "").strip()
+    
+    problem_templates = {
+        "중1": {
+            "문제내용": "Choose the correct verb form to complete the sentence: The students ___ homework every day.",
+            "보기1": "do",
+            "보기2": "does",
+            "보기3": "doing",
+            "보기4": "did",
+            "보기5": "done",
+            "정답": "보기1",
+            "해설": "주어가 'The students'로 복수이므로 'do'가 정답입니다. 3인칭 단수 주어가 아닐 때는 기본형 do를 사용합니다."
+        },
+        "중2": {
+            "문제내용": "Choose the correct sentence: Yesterday, I ___.",
+            "보기1": "go to school",
+            "보기2": "goes to school",
+            "보기3": "went to school",
+            "보기4": "going to school",
+            "보기5": "gone to school",
+            "정답": "보기3",
+            "해설": "과거 시제를 사용해야 합니다. 'Yesterday'는 과거 시점을 나타내므로 'went'가 정답입니다."
+        },
+        "중3": {
+            "문제내용": "Fill in the blank: If it ___ tomorrow, we will cancel the picnic.",
+            "보기1": "rain",
+            "보기2": "rains",
+            "보기3": "rained",
+            "보기4": "raining",
+            "보기5": "is raining",
+            "정답": "보기2",
+            "해설": "조건절(If clause)에서 미래 시제는 현재형으로 표현합니다. 주어가 'it'이므로 3인칭 단수형 'rains'가 정답입니다."
+        },
+        "고1": {
+            "문제내용": "Choose the correct sentence: By the time I arrived at the station, the train ___.",
+            "보기1": "already left",
+            "보기2": "has already left",
+            "보기3": "had already left",
+            "보기4": "was already left",
+            "보기5": "would already left",
+            "정답": "보기3",
+            "해설": "대과거(past perfect) 시제가 필요한 문장입니다. 'By the time I arrived'는 과거의 한 시점을 나타내고, 그 전에 일어난 일은 'had + 과거분사'로 표현합니다."
+        },
+        "고2": {
+            "문제내용": "Fill in the blank: She suggested that he ___ the offer.",
+            "보기1": "accept",
+            "보기2": "accepts",
+            "보기3": "accepted",
+            "보기4": "would accept",
+            "보기5": "has accepted",
+            "정답": "보기1",
+            "해설": "suggest that 다음에는 (should) 동사원형을 사용하는 가정법 현재가 옵니다. 따라서 'accept'가 정답입니다."
+        },
+        "고3": {
+            "문제내용": "Choose the appropriate expression: The project is behind schedule, ___.",
+            "보기1": "so we need to catch up",
+            "보기2": "but we have plenty of time",
+            "보기3": "therefore we can take a break",
+            "보기4": "however we should slow down",
+            "보기5": "nevertheless it's completed on time",
+            "정답": "보기1",
+            "해설": "뒤에 이어지는 표현이 앞 문장의 논리적 결과여야 합니다. '프로젝트가 일정보다 뒤처져 있다'라는 상황에서는 '따라서 따라잡을 필요가 있다'가 가장 논리적인 결론입니다."
+        }
+    }
+    
+    # 학년에 맞는 템플릿 선택
+    template = problem_templates.get(grade, problem_templates["중1"])
+    
     return {
         "문제ID": f"dummy-{random.randint(1, 1000)}",
         "과목": "영어",
-        "학년": "중1",
+        "학년": grade,
         "문제유형": "객관식",
-        "난이도": "하",
-        "문제내용": "Pick the correct word to complete: The cat ___ to school.",
-        "보기1": "went",
-        "보기2": "gone",
-        "보기3": "going",
-        "보기4": "goes",
-        "보기5": "go",
-        "정답": "보기4",
+        "난이도": "중",
+        "문제내용": template["문제내용"],
+        "보기1": template["보기1"],
+        "보기2": template["보기2"],
+        "보기3": template["보기3"],
+        "보기4": template["보기4"],
+        "보기5": template["보기5"],
+        "정답": template["정답"],
         "키워드": "동사 시제",
-        "해설": "현재 시제를 사용해야 합니다. 주어가 'The cat'으로 3인칭 단수이므로 'goes'가 정답입니다."
+        "해설": template["해설"],
+        "보기정보": {
+            "보기1": template["보기1"],
+            "보기2": template["보기2"],
+            "보기3": template["보기3"],
+            "보기4": template["보기4"],
+            "보기5": template["보기5"]
+        }
     }
+
+def save_student_result(student_id, student_name, student_grade, exam_data):
+    """
+    학생의 시험 결과를 저장합니다. 학년별로 정리하여 누적 데이터를 관리합니다.
+    
+    - student_id: 학생 ID
+    - student_name: 학생 이름
+    - student_grade: 학생 학년
+    - exam_data: 시험 결과 데이터 (정답률, 문제별 결과, 총점 등을 포함)
+    """
+    try:
+        sheet = connect_to_sheets()
+        if not sheet:
+            return False
+        
+        # 현재 날짜 및 시간
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        try:
+            # 학생 결과 워크시트 확인 (학년별로 구분)
+            worksheet_name = f"student_results_{student_grade}"
+            worksheet_name = worksheet_name.replace(" ", "_").replace("학년", "").strip()
+            
+            try:
+                # 기존 워크시트가 있는지 확인
+                results_ws = sheet.worksheet(worksheet_name)
+            except Exception as e:
+                # 워크시트가 없으면 생성
+                results_ws = sheet.add_worksheet(worksheet_name, 1000, 9)
+                results_ws.append_row([
+                    "학생ID",
+                    "이름",
+                    "학년",
+                    "시험일시",
+                    "문제수",
+                    "정답수",
+                    "정답률",
+                    "총점",
+                    "분석결과"
+                ])
+            
+            # 결과 데이터 준비
+            correct_count = exam_data.get('correct_count', 0)
+            total_problems = exam_data.get('total_problems', 0)
+            accuracy = exam_data.get('accuracy', 0)
+            total_score = exam_data.get('total_score', 0)
+            
+            # 틀린 문제 유형 분석
+            wrong_problems = []
+            for problem_id, details in exam_data.get('details', {}).items():
+                if not details.get('is_correct', False):
+                    problem_data = st.session_state.student_answers.get(problem_id, {})
+                    wrong_problems.append({
+                        "유형": problem_data.get('문제유형', ''),
+                        "키워드": problem_data.get('키워드', '')
+                    })
+            
+            # 취약점 분석
+            weaknesses = get_student_weaknesses(student_id)
+            weak_areas = []
+            if weaknesses:
+                sorted_weaknesses = sorted(weaknesses.items(), key=lambda x: x[1]["취약도"], reverse=True)
+                weak_areas = [kw for kw, _ in sorted_weaknesses[:3]]
+            
+            # 분석 결과 생성
+            analysis = f"취약 영역: {', '.join(weak_areas) if weak_areas else '없음'}"
+            if wrong_problems:
+                wrong_types = {}
+                for p in wrong_problems:
+                    ptype = p.get('유형', '')
+                    if ptype:
+                        wrong_types[ptype] = wrong_types.get(ptype, 0) + 1
+                
+                if wrong_types:
+                    analysis += f" | 오답 유형: {', '.join([f'{t}({c}개)' for t, c in wrong_types.items()])}"
+            
+            # 시험 결과 추가
+            results_ws.append_row([
+                student_id,
+                student_name,
+                student_grade,
+                current_time,
+                total_problems,
+                correct_count,
+                f"{accuracy:.1f}%",
+                total_score,
+                analysis
+            ])
+            
+            return True
+            
+        except Exception as e:
+            print(f"학생 결과 저장 오류: {e}")
+            return False
+            
+    except Exception as e:
+        print(f"학생 결과 저장 오류: {e}")
+        return False
+
+def get_student_progress(student_id, student_grade):
+    """
+    학생의 학습 진행 상황과 성적 추이를 가져옵니다.
+    """
+    try:
+        sheet = connect_to_sheets()
+        if not sheet:
+            return None
+        
+        try:
+            # 학년별 결과 워크시트 확인
+            worksheet_name = f"student_results_{student_grade}"
+            worksheet_name = worksheet_name.replace(" ", "_").replace("학년", "").strip()
+            
+            try:
+                results_ws = sheet.worksheet(worksheet_name)
+                all_records = results_ws.get_all_records()
+            except Exception as e:
+                # 워크시트가 없으면 빈 데이터 반환
+                return {"tests": [], "average_score": 0, "progress": []}
+            
+            # 해당 학생의 레코드만 필터링
+            student_records = [r for r in all_records if r["학생ID"] == student_id]
+            
+            if not student_records:
+                return {"tests": [], "average_score": 0, "progress": []}
+            
+            # 시험별 데이터 준비
+            tests = []
+            scores = []
+            
+            for record in student_records:
+                # 날짜 포맷 변환
+                try:
+                    test_date = datetime.strptime(record["시험일시"], "%Y-%m-%d %H:%M:%S")
+                    formatted_date = test_date.strftime("%m/%d")
+                except:
+                    formatted_date = "날짜 오류"
+                
+                # 점수 변환
+                try:
+                    score = float(record["총점"])
+                except:
+                    score = 0
+                
+                tests.append({
+                    "date": formatted_date,
+                    "score": score,
+                    "accuracy": record.get("정답률", "0%").replace("%", ""),
+                    "analysis": record.get("분석결과", "")
+                })
+                
+                scores.append(score)
+            
+            # 평균 점수 계산
+            average_score = sum(scores) / len(scores) if scores else 0
+            
+            # 성적 추이 (최대 10개)
+            progress = [{"date": t["date"], "score": t["score"]} for t in tests[-10:]]
+            
+            return {
+                "tests": tests,
+                "average_score": average_score,
+                "progress": progress
+            }
+            
+        except Exception as e:
+            print(f"학생 진행 상황 데이터 가져오기 오류: {e}")
+            return None
+            
+    except Exception as e:
+        print(f"학생 진행 상황 데이터 가져오기 오류: {e}")
+        return None
