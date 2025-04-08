@@ -1001,8 +1001,9 @@ def exam_score_page():
                             problem_data.get('해설', '')
                         )
                         feedback["첨삭"] = feedback_text
-                except:
+                except Exception as e:
                     # Gemini 피드백 생성 실패 시 기본 피드백 사용
+                    st.warning(f"첨삭 생성 중 오류 발생: {str(e)}")
                     if result['is_correct']:
                         feedback["첨삭"] = "정답입니다! 해설을 통해 개념을 확실히 이해해 보세요."
                     else:
@@ -1012,42 +1013,126 @@ def exam_score_page():
             
             st.session_state.feedback_data = feedback_data
     
-    # 각 문제별 결과
+    # 각 문제별 결과 - 모든 문제를 펼쳐서 표시
     st.subheader("상세 결과")
     
-    for idx, (problem_id, result) in enumerate(results['details'].items(), 1):
-        problem_data = st.session_state.student_answers.get(problem_id, {})
-        feedback_data = st.session_state.feedback_data.get(problem_id, {})
+    # 탭으로 정답/오답 구분
+    tab1, tab2, tab3 = st.tabs(["모든 문제", "정답 문제", "오답 문제"])
+    
+    with tab1:
+        # 모든 문제 결과
+        for idx, (problem_id, result) in enumerate(results['details'].items(), 1):
+            problem_data = st.session_state.student_answers.get(problem_id, {})
+            feedback_data = st.session_state.feedback_data.get(problem_id, {})
+            
+            # 아이콘으로 정답/오답 표시
+            if result['is_correct']:
+                icon = "✅"
+            else:
+                icon = "❌"
+            
+            with st.container(border=True):
+                st.markdown(f"### {icon} 문제 {idx}: {problem_data.get('과목', '과목 없음')} ({problem_data.get('문제유형', '유형 없음')})")
+                st.markdown(problem_data.get('문제', '문제 없음'))
+                
+                if '보기정보' in problem_data and any(problem_data['보기정보'].values()):
+                    # 보기 정보를 표로 표시
+                    option_data = []
+                    for option_key, option_text in problem_data['보기정보'].items():
+                        if option_text:
+                            if option_key == result['student_answer'] and option_key == result['correct_answer']:
+                                # 정답이고 학생도 맞춤
+                                row = [f"{option_key} 🟢", option_text]
+                            elif option_key == result['student_answer']:
+                                # 학생이 선택했지만 오답
+                                row = [f"{option_key} 🔴", option_text]
+                            elif option_key == result['correct_answer']:
+                                # 정답이지만 학생이 선택하지 않음
+                                row = [f"{option_key} ⭕", option_text]
+                            else:
+                                # 일반 보기
+                                row = [option_key, option_text]
+                            option_data.append(row)
+                    
+                    if option_data:
+                        st.table(option_data)
+                
+                # 정답 비교 영역 (2개 열로 표시)
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("#### 제출한 답안")
+                    if result['is_correct']:
+                        st.success(f"**{result['student_answer']}**")
+                    else:
+                        st.error(f"**{result['student_answer']}**")
+                with col2:
+                    st.markdown("#### 정답")
+                    st.success(f"**{result['correct_answer']}**")
+                
+                # 해설 및 첨삭 피드백
+                st.markdown("#### 해설")
+                st.markdown(feedback_data.get('해설', '해설 정보가 없습니다.'))
+                
+                if feedback_data.get('첨삭'):
+                    st.markdown("#### 첨삭 피드백")
+                    st.markdown(feedback_data.get('첨삭', ''))
+    
+    with tab2:
+        # 정답 문제만 표시
+        correct_problems = [(problem_id, result) for problem_id, result in results['details'].items() if result['is_correct']]
         
-        if result['is_correct']:
-            icon = "✅"
-        else:
-            icon = "❌"
+        if not correct_problems:
+            st.info("정답인 문제가 없습니다.")
         
-        with st.expander(f"{icon} 문제 {idx}: {problem_data.get('과목', '과목 없음')} ({problem_data.get('문제유형', '유형 없음')})"):
-            st.markdown(problem_data.get('문제', '문제 없음'))
+        for idx, (problem_id, result) in enumerate(correct_problems, 1):
+            problem_data = st.session_state.student_answers.get(problem_id, {})
+            feedback_data = st.session_state.feedback_data.get(problem_id, {})
             
-            if '보기정보' in problem_data and any(problem_data['보기정보'].values()):
-                st.markdown("#### 보기:")
-                for option_key, option_text in problem_data['보기정보'].items():
-                    if option_text:
-                        st.markdown(f"**{option_key}**: {option_text}")
+            with st.container(border=True):
+                st.markdown(f"### ✅ 문제 {idx}: {problem_data.get('과목', '과목 없음')} ({problem_data.get('문제유형', '유형 없음')})")
+                st.markdown(problem_data.get('문제', '문제 없음'))
+                
+                # 정답 확인
+                st.success(f"**정답**: {result['correct_answer']}")
+                
+                # 해설 및 첨삭 피드백
+                st.markdown("#### 해설")
+                st.markdown(feedback_data.get('해설', '해설 정보가 없습니다.'))
+                
+                if feedback_data.get('첨삭'):
+                    st.markdown("#### 첨삭 피드백")
+                    st.markdown(feedback_data.get('첨삭', ''))
+    
+    with tab3:
+        # 오답 문제만 표시
+        wrong_problems = [(problem_id, result) for problem_id, result in results['details'].items() if not result['is_correct']]
+        
+        if not wrong_problems:
+            st.info("틀린 문제가 없습니다. 모든 문제를 맞혔습니다!")
+        
+        for idx, (problem_id, result) in enumerate(wrong_problems, 1):
+            problem_data = st.session_state.student_answers.get(problem_id, {})
+            feedback_data = st.session_state.feedback_data.get(problem_id, {})
             
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("#### 제출한 답안")
-                st.markdown(f"**{result['student_answer']}**")
-            with col2:
-                st.markdown("#### 정답")
-                st.markdown(f"**{result['correct_answer']}**")
-            
-            # 해설 및 피드백 표시
-            st.markdown("#### 해설")
-            st.markdown(feedback_data.get('해설', ''))
-            
-            if feedback_data.get('첨삭'):
-                st.markdown("#### 첨삭 피드백")
-                with st.container(border=True):
+            with st.container(border=True):
+                st.markdown(f"### ❌ 문제 {idx}: {problem_data.get('과목', '과목 없음')} ({problem_data.get('문제유형', '유형 없음')})")
+                st.markdown(problem_data.get('문제', '문제 없음'))
+                
+                # 정답 비교 영역
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("#### 제출한 답안")
+                    st.error(f"**{result['student_answer']}**")
+                with col2:
+                    st.markdown("#### 정답")
+                    st.success(f"**{result['correct_answer']}**")
+                
+                # 해설 및 첨삭 피드백
+                st.markdown("#### 해설")
+                st.markdown(feedback_data.get('해설', '해설 정보가 없습니다.'))
+                
+                if feedback_data.get('첨삭'):
+                    st.markdown("#### 첨삭 피드백")
                     st.markdown(feedback_data.get('첨삭', ''))
     
     # 성적 분석 버튼

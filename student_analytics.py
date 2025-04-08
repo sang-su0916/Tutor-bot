@@ -139,36 +139,91 @@ def update_student_weakness(student_id, keyword, is_correct):
 
 def get_problem_for_student(student_id, available_problems):
     """
-    학생의 취약점에 맞는 문제를 추천합니다.
+    학생의 취약점을 기반으로 적절한 문제를 추천합니다.
+    - student_id: 학생 ID
+    - available_problems: 사용 가능한 문제 목록
     """
-    if not student_id or not available_problems:
-        return random.choice(available_problems) if available_problems else None
+    if not available_problems:
+        return None
     
-    # 학생 취약점 가져오기
+    import random
+    
+    # 학생의 취약점 데이터 가져오기
     weaknesses = get_student_weaknesses(student_id)
     
-    # 취약점이 있고 랜덤 요소를 위해 70% 확률로 취약점 기반 선택
-    if weaknesses and random.random() < 0.7:
-        # 취약점 점수가 높은 순으로 정렬
-        sorted_weaknesses = sorted(weaknesses.items(), key=lambda x: x[1]["취약도"], reverse=True)
-        
-        # 상위 3개 취약 키워드 (또는 그 이하)
-        top_weak_keywords = [kw for kw, _ in sorted_weaknesses[:3]]
-        
-        # 해당 키워드를 포함하는 문제 필터링
-        weak_problems = []
-        for problem in available_problems:
-            if "키워드" in problem and problem["키워드"]:
-                keywords = [k.strip() for k in problem["키워드"].split(',')]
-                if any(kw in top_weak_keywords for kw in keywords):
-                    weak_problems.append(problem)
-        
-        # 취약 키워드 관련 문제가 있으면 그 중에서 선택
-        if weak_problems:
-            return random.choice(weak_problems)
+    # 충분한 데이터가 있는지 확인 (최소 5개 이상의 키워드에 대한 데이터가 있어야 함)
+    sufficient_data = len(weaknesses) >= 5 and sum(1 for _, data in weaknesses.items() if data['total'] >= 3) >= 3
     
-    # 취약점 기반 선택이 안 되면 일반 랜덤 선택
-    return random.choice(available_problems)
+    # 초기 데이터 수집 단계 (다양한 유형의 문제 제공)
+    if not sufficient_data:
+        # 다양한 키워드가 있는 문제들을 우선적으로 제공
+        problems_by_keyword = {}
+        
+        # 문제를 키워드별로 분류
+        for problem in available_problems:
+            keywords = problem.get("키워드", "").split(",")
+            keywords = [k.strip() for k in keywords if k.strip()]
+            
+            for keyword in keywords:
+                if keyword not in problems_by_keyword:
+                    problems_by_keyword[keyword] = []
+                problems_by_keyword[keyword].append(problem)
+        
+        # 학생이 아직 접하지 않은 키워드의 문제를 우선적으로 제공
+        unseen_keywords = [k for k in problems_by_keyword.keys() if k not in weaknesses]
+        
+        if unseen_keywords:
+            # 아직 접하지 않은 키워드 중 하나를 무작위로 선택
+            selected_keyword = random.choice(unseen_keywords)
+            problems = problems_by_keyword[selected_keyword]
+            return random.choice(problems)
+        else:
+            # 모든 키워드를 이미 접했다면, 가장 적게 접한 키워드의 문제 제공
+            keywords_count = {k: data['total'] for k, data in weaknesses.items()}
+            min_count = min(keywords_count.values()) if keywords_count else 0
+            least_seen_keywords = [k for k, count in keywords_count.items() if count == min_count]
+            
+            if least_seen_keywords:
+                selected_keyword = random.choice(least_seen_keywords)
+                # 해당 키워드가 있는 문제 필터링
+                filtered_problems = [p for p in available_problems if selected_keyword in p.get("키워드", "").split(",")]
+                if filtered_problems:
+                    return random.choice(filtered_problems)
+            
+            # 위 조건이 충족되지 않으면 무작위 선택
+            return random.choice(available_problems)
+    
+    # 충분한 데이터가 수집된 후 (취약점 기반 문제 제공)
+    else:
+        # 취약점 목록이 있으면 취약점 기반으로 문제 선택
+        if weaknesses:
+            # 확률적으로 취약점 기반 또는 무작위 선택
+            if random.random() < 0.7:  # 70% 확률로 취약점 기반 문제 제공
+                # 취약점 정도에 따라 가중치 부여
+                weighted_keywords = []
+                for keyword, data in weaknesses.items():
+                    if data['total'] > 0:
+                        # 틀린 비율이 높을수록 가중치 증가
+                        weight = (data['total'] - data['correct']) / data['total']
+                        # 최소 가중치 보장
+                        weight = max(0.1, weight)
+                        weighted_keywords.extend([keyword] * int(weight * 10))
+                
+                if weighted_keywords:
+                    # 가중치에 따라 키워드 선택
+                    selected_keyword = random.choice(weighted_keywords)
+                    
+                    # 해당 키워드가 있는 문제 필터링
+                    filtered_problems = [p for p in available_problems if selected_keyword in p.get("키워드", "").split(",")]
+                    
+                    if filtered_problems:
+                        return random.choice(filtered_problems)
+            
+            # 30% 확률로 무작위 문제 제공 (또는 위 조건이 충족되지 않은 경우)
+            return random.choice(available_problems)
+        else:
+            # 취약점 데이터가 없으면 무작위 선택
+            return random.choice(available_problems)
 
 def get_student_performance(student_id):
     """
