@@ -85,39 +85,22 @@ def generate_feedback(question, student_answer, correct_answer, explanation):
             피드백: [피드백 내용]
             """
 
-        # API 호출 - 버전에 따라 다른 방식 사용
+        # API 호출 - OpenAI 0.28 버전용
         try:
-            # 이전 버전 API 사용 (ChatCompletion)
-            try:
-                response = openai.ChatCompletion.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "당신은 학생들의 답안을 채점하고 친절한 피드백을 제공하는 AI 튜터입니다."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.7,
-                    max_tokens=1000,
-                )
-                
-                # 응답 파싱
-                output = response.choices[0].message.content.strip()
-            except (AttributeError, ImportError):
-                # 새 버전 API 사용 (OpenAI 클라이언트)
-                from openai import OpenAI
-                client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-                
-                response = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": "당신은 학생들의 답안을 채점하고 친절한 피드백을 제공하는 AI 튜터입니다."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.7,
-                    max_tokens=1000,
-                )
-                
-                # 응답 파싱 - 새 버전 API의 다른 응답 구조 처리
-                output = response.choices[0].message.content.strip()
+            # OpenAI v0 API 호출 (0.28 버전)
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "당신은 학생들의 답안을 채점하고 친절한 피드백을 제공하는 AI 튜터입니다."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=800,
+                request_timeout=30
+            )
+            
+            # 응답 파싱
+            output = response.choices[0].message['content'].strip()
         except Exception as api_error:
             # API 호출 실패 시 기본 응답 생성
             print(f"OpenAI API 호출 실패: {api_error}")
@@ -139,8 +122,25 @@ def generate_feedback(question, student_answer, correct_answer, explanation):
         
         try:
             # 점수와 피드백 분리
-            score_line = [line for line in output.split('\n') if line.startswith('점수:')][0]
-            score = 100 if '100' in score_line else 0
+            score_line = [line for line in output.split('\n') if line.startswith('점수:')]
+            if not score_line:
+                # 점수 라인을 찾지 못하면 기본 채점 로직 사용
+                if is_objective:
+                    is_correct = (student_answer == correct_answer)
+                else:
+                    normalized_student = student_answer.lower().strip() if student_answer else ""
+                    normalized_correct = correct_answer.lower().strip()
+                    is_correct = (normalized_student == normalized_correct)
+                
+                score = 100 if is_correct else 0
+                
+                if '정답' in output.lower() and '틀' not in output.lower():
+                    score = 100
+                elif '틀' in output.lower():
+                    score = 0
+            else:
+                score_line = score_line[0]
+                score = 100 if '100' in score_line else 0
             
             feedback_lines = [line for line in output.split('\n') if not line.startswith('점수:')]
             feedback = '\n'.join(feedback_lines).replace('피드백:', '').strip()

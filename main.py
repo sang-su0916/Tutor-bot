@@ -41,11 +41,18 @@ try:
     import openai
     if "OPENAI_API_KEY" in st.secrets:
         openai.api_key = st.secrets["OPENAI_API_KEY"]
-        # API 버전 확인 및 필요한 경우 v0 API 사용 설정
-        if hasattr(openai, '_set_api_version'):
-            openai._set_api_version('v0')
+        # v0.28 버전의 OpenAI API 초기화
+        # _set_api_version 대신 정확한 버전 확인 및 설정
+        if hasattr(openai, '__version__') and openai.__version__.startswith('0.'):
+            # v0 (0.28) 버전 사용 중 - 추가 설정 필요 없음
+            pass
+        elif hasattr(openai, 'ChatCompletion'):
+            # 이전 버전의 API 형식으로 동작하는지 확인
+            pass
+        else:
+            st.warning("OpenAI API 버전 호환성 문제가 있을 수 있습니다. pip install openai==0.28.0 명령으로 설치해 주세요.")
 except ImportError:
-    st.error("OpenAI 모듈을 불러올 수 없습니다.")
+    st.error("OpenAI 모듈을 불러올 수 없습니다. pip install openai==0.28.0 명령으로 설치해 주세요.")
 except Exception as e:
     st.error(f"OpenAI API 초기화 오류: {str(e)}")
 
