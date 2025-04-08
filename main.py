@@ -379,7 +379,7 @@ def student_dashboard():
             # 완전히 모든 시험 관련 상태 초기화
             keys_to_delete = []
             for key in st.session_state.keys():
-                if key.startswith("exam_") or key.startswith("used_problem_ids_") or key in [
+                if key.startswith("exam_") or key in [
                     "student_answers", "all_problems_loaded", "problem_count", 
                     "max_problems", "start_time", "time_limit"]:
                     keys_to_delete.append(key)
@@ -389,11 +389,7 @@ def student_dashboard():
                 if key in st.session_state:
                     del st.session_state[key]
             
-            # 학생별 사용된 문제 ID 초기화
-            student_key = f"used_problem_ids_{st.session_state.student_id}"
-            if student_key in st.session_state:
-                del st.session_state[student_key]
-            
+            # 학생별 사용된 문제 ID는 초기화하지 않음 (중복 문제 방지)
             # 기본값 설정
             st.session_state.problem_count = 0
             st.session_state.max_problems = 20
@@ -484,6 +480,10 @@ def load_exam_problems(student_id, student_grade, problem_count=20):
     if student_key not in st.session_state:
         st.session_state[student_key] = set()
     
+    # 이미 사용된 문제 ID 목록
+    used_problem_ids = st.session_state[student_key]
+    print(f"이미 사용된 문제 ID 수: {len(used_problem_ids)}")
+    
     attempts = 0
     max_attempts = 50  # 무한 루프 방지
     
@@ -521,6 +521,17 @@ def load_exam_problems(student_id, student_grade, problem_count=20):
                     is_valid = False
                     break
             
+            if not is_valid:
+                continue
+                
+            # 이미 사용된 문제 ID 제외 - 학생별로 추적
+            if "문제ID" not in p or not p["문제ID"]:
+                is_valid = False
+                continue
+                
+            if p["문제ID"] in used_problem_ids:
+                continue
+            
             # 학년 확인 (정규화된 학년과 일치 또는 포함 관계 확인)
             problem_grade = p.get("학년", "")
             problem_grade_norm = normalize_grade(problem_grade)
@@ -529,104 +540,15 @@ def load_exam_problems(student_id, student_grade, problem_count=20):
             if not (problem_grade_norm == normalized_student_grade or 
                    normalized_student_grade in problem_grade or 
                    problem_grade in normalized_student_grade):
-                is_valid = False
-            
+                continue
+                
             # 문제 유형별 추가 유효성 검사
             problem_type = p.get("문제유형", "")
             
-            # 객관식 문제 유효성 검사
-            if problem_type == "객관식" and is_valid:
-                # 보기 정보 처리
-                if "보기정보" not in p:
-                    p["보기정보"] = {}
-                
-                # 보기가 있는 경우 라디오 버튼으로 표시
-                has_options = False
-                if "보기정보" in p and p["보기정보"]:
-                    options = []
-                    option_texts = {}
-                    
-                    # 보기 중복 확인을 위한 집합
-                    seen_options_text = set()
-                    
-                    try:
-                        # 보기 항목들을 정렬해서 일관된 순서로 표시
-                        sorted_options = sorted(p["보기정보"].items())
-                        
-                        # 보기 개수 표준화 - 최대 5개로 통일
-                        max_options = 5
-                        
-                        # 가능한 모든 보기키 생성 ("보기1"~"보기5")
-                        all_option_keys = [f"보기{i}" for i in range(1, max_options+1)]
-                        
-                        # 실제 있는 보기 처리
-                        for key, text in sorted_options:
-                            if not key.startswith("보기"):
-                                continue  # 보기 형식이 아닌 키는 건너뜀
-                                
-                            # 중복된 보기 텍스트 제거
-                            if text and text not in seen_options_text:
-                                options.append(key)
-                                option_texts[key] = text
-                                seen_options_text.add(text)
-                        
-                        # 보기가 있는지 확인
-                        if options:
-                            has_options = True
-                            # 선택 라디오 버튼
-                            st.markdown("### 정답 선택:")
-                            
-                            # 인덱스 확인 로직 개선
-                            index = None
-                            if p["제출답안"] in options:
-                                index = options.index(p["제출답안"])
-                            
-                            selected = st.radio(
-                                f"문제 {idx}",
-                                options,
-                                format_func=lambda x: f"{x.replace('보기', '')}: {option_texts[x]}",
-                                index=index,  # 저장된 답안이 없으면 선택하지 않음
-                                key=f"radio_{p['문제ID']}",
-                                label_visibility="collapsed"
-                            )
-                            
-                            # 학생 답안 저장
-                            if selected is not None:  # 선택된 경우에만 저장
-                                if p["문제ID"] not in st.session_state.student_answers:
-                                    st.session_state.student_answers[p["문제ID"]] = p.copy()
-                                st.session_state.student_answers[p["문제ID"]]["제출답안"] = selected
-                    except Exception as e:
-                        st.error(f"보기 처리 중 오류: {str(e)}")
-                
-                # 보기가 없거나 처리 오류면 텍스트 입력으로 대체
-                if not has_options:
-                    # 선택형이지만 보기 정보가 없는 경우
-                    if p.get("문제유형") == "객관식":
-                        st.error("이 문제에 대한 보기 정보가 없습니다. 직접 답안을 입력해주세요.")
-                    
-                    # 주관식인 경우 텍스트 입력
-                    st.markdown("### 답안 입력:")
-                    answer = st.text_input(
-                        f"문제 {idx} 답안",
-                        value=p.get("제출답안", ""),
-                        key=f"text_{p['문제ID']}",
-                        max_chars=200
-                    )
-                    
-                    # 학생 답안 저장
-                    if answer.strip():  # 입력된 경우에만 저장
-                        if p["문제ID"] not in st.session_state.student_answers:
-                            st.session_state.student_answers[p["문제ID"]] = p.copy()
-                        st.session_state.student_answers[p["문제ID"]]["제출답안"] = answer
-            
-            # 이미 사용된 ID 제외 - 학생별로 추적
-            if p["문제ID"] in st.session_state[student_key]:
-                is_valid = False
-            
-            if is_valid:
-                # 문제 유형 카운트 증가
-                problem_type_count[problem_type] = problem_type_count.get(problem_type, 0) + 1
-                filtered_problems.append(p)
+            # 유효한 문제만 추가
+            # 문제 유형 카운트 증가
+            problem_type_count[problem_type] = problem_type_count.get(problem_type, 0) + 1
+            filtered_problems.append(p)
         
         # 유형별 통계 정보 출력
         st.info(f"학년 '{normalized_student_grade}'에 맞는 문제 {len(filtered_problems)}개를 찾았습니다.")
@@ -644,6 +566,10 @@ def load_exam_problems(student_id, student_grade, problem_count=20):
         # 문제 유형별로 분류
         problems_by_type = {}
         for p in filtered_problems:
+            # 이미 사용된 문제는 건너뛰기 (한 번 더 확인)
+            if p["문제ID"] in used_problem_ids:
+                continue
+                
             problem_type = p.get("문제유형", "기타")
             if problem_type not in problems_by_type:
                 problems_by_type[problem_type] = []
@@ -659,13 +585,14 @@ def load_exam_problems(student_id, student_grade, problem_count=20):
                 break
                 
             # 각 유형에서 1문제 선택
-            selected = random.choice(type_problems)
-            selected_problems.append(selected)
-            st.session_state[student_key].add(selected["문제ID"])
-            
-            # 선택된 문제는 제외
-            type_problems.remove(selected)
-            remaining_count -= 1
+            if type_problems:
+                selected = random.choice(type_problems)
+                selected_problems.append(selected)
+                used_problem_ids.add(selected["문제ID"])
+                
+                # 선택된 문제는 제외
+                type_problems.remove(selected)
+                remaining_count -= 1
         
         # 남은 문제 수를 유형별 비율에 따라 배분
         if remaining_count > 0 and problems_by_type:
@@ -690,17 +617,17 @@ def load_exam_problems(student_id, student_grade, problem_count=20):
                         if type_problems and remaining_count > 0:
                             selected = random.choice(type_problems)
                             selected_problems.append(selected)
-                            st.session_state[student_key].add(selected["문제ID"])
+                            used_problem_ids.add(selected["문제ID"])
                             type_problems.remove(selected)
                             remaining_count -= 1
         
         # 여전히 부족하다면 남은 문제들 중에서 무작위로 선택
-        remaining_problems = [p for p in filtered_problems if p["문제ID"] not in st.session_state[student_key]]
+        remaining_problems = [p for p in filtered_problems if p["문제ID"] not in used_problem_ids]
         
         while remaining_count > 0 and remaining_problems and attempts < max_attempts:
             selected = random.choice(remaining_problems)
             selected_problems.append(selected)
-            st.session_state[student_key].add(selected["문제ID"])
+            used_problem_ids.add(selected["문제ID"])
             remaining_problems.remove(selected)
             remaining_count -= 1
             attempts += 1
@@ -713,7 +640,11 @@ def load_exam_problems(student_id, student_grade, problem_count=20):
             # 더미 문제 ID 추적
             for p in dummy_problems:
                 if "문제ID" in p:
-                    st.session_state[student_key].add(p["문제ID"])
+                    used_problem_ids.add(p["문제ID"])
+        
+        # 세션 상태 업데이트
+        st.session_state[student_key] = used_problem_ids
+        print(f"업데이트 후 사용된 문제 ID 수: {len(used_problem_ids)}")
         
         # 선택된 문제 목록을 무작위로 섞기
         random.shuffle(selected_problems)
@@ -795,10 +726,8 @@ def exam_page():
             st.session_state.exam_answered_count = 0
             st.session_state.exam_start_time = time.time()
             
-            # 학생별 사용된 문제 초기화 - 매번 시험을 새로 볼 때마다 초기화
-            student_key = f"used_problem_ids_{st.session_state.student_id}"
-            if student_key in st.session_state:
-                del st.session_state[student_key]
+            # 학생별 문제 ID 추적 상태는 초기화하지 않음
+            # 이전 세션에서 사용한 문제를 계속 추적하도록 유지
             
             # 시험 문제 로드
             try:
