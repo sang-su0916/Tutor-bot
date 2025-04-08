@@ -87,7 +87,7 @@ def generate_feedback(question, student_answer, correct_answer, explanation):
 
         # API 호출 - OpenAI 0.28 버전용
         try:
-            # OpenAI v0 API 호출 (0.28 버전)
+            # OpenAI 0.28 API 호출
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
@@ -99,8 +99,8 @@ def generate_feedback(question, student_answer, correct_answer, explanation):
                 request_timeout=30
             )
             
-            # 응답 파싱
-            output = response.choices[0].message['content'].strip()
+            # 응답 파싱 - 0.28 버전은 'message'가 아닌 message 키를 사용함
+            output = response.choices[0].message.content.strip()
         except Exception as api_error:
             # API 호출 실패 시 기본 응답 생성
             print(f"OpenAI API 호출 실패: {api_error}")
@@ -169,6 +169,7 @@ def generate_feedback(question, student_answer, correct_answer, explanation):
     except Exception as e:
         print(f"피드백 생성 중 오류: {e}")
         # 단답형 또는 객관식 여부에 따라 다른 기본 채점 로직 적용
+        is_objective = correct_answer.startswith("보기")
         if is_objective:
             # 객관식: 정확히 일치해야 함
             is_correct = (student_answer == correct_answer)

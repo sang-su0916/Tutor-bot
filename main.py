@@ -41,18 +41,17 @@ try:
     import openai
     if "OPENAI_API_KEY" in st.secrets:
         openai.api_key = st.secrets["OPENAI_API_KEY"]
-        # v0.28 버전의 OpenAI API 초기화
-        # _set_api_version 대신 정확한 버전 확인 및 설정
-        if hasattr(openai, '__version__') and openai.__version__.startswith('0.'):
-            # v0 (0.28) 버전 사용 중 - 추가 설정 필요 없음
-            pass
-        elif hasattr(openai, 'ChatCompletion'):
-            # 이전 버전의 API 형식으로 동작하는지 확인
-            pass
+        # 버전 확인 - 이미 0.28 버전이 설치되어 있는지 확인
+        if hasattr(openai, '__version__'):
+            version = openai.__version__
+            if version.startswith('0.28'):
+                print(f"OpenAI 버전 {version} 사용 중")
+            else:
+                st.warning(f"현재 OpenAI 버전 {version}이 0.28과 다릅니다. 'pip install openai==0.28.0' 명령어로 설치해주세요.")
         else:
-            st.warning("OpenAI API 버전 호환성 문제가 있을 수 있습니다. pip install openai==0.28.0 명령으로 설치해 주세요.")
+            st.warning("OpenAI 버전을 확인할 수 없습니다. 'pip install openai==0.28.0' 명령어로 설치해주세요.")
 except ImportError:
-    st.error("OpenAI 모듈을 불러올 수 없습니다. pip install openai==0.28.0 명령으로 설치해 주세요.")
+    st.error("OpenAI 모듈을 불러올 수 없습니다. 'pip install openai==0.28.0' 명령어로 설치해주세요.")
 except Exception as e:
     st.error(f"OpenAI API 초기화 오류: {str(e)}")
 
@@ -1098,37 +1097,20 @@ def check_api_connections():
             openai.api_key = st.secrets["OPENAI_API_KEY"]
             
             try:
-                # OpenAI의 API 버전에 따라 적절한 방법으로 호출
-                try:
-                    # 이전 버전 API 사용 (ChatCompletion)
-                    response = openai.ChatCompletion.create(
-                        model="gpt-3.5-turbo",
-                        messages=[
-                            {"role": "system", "content": "You are a helpful assistant."},
-                            {"role": "user", "content": "Hello!"}
-                        ],
-                        max_tokens=5
-                    )
-                    if response:
-                        connections["openai"] = True
-                except (AttributeError, ImportError) as e:
-                    # 새 버전 API 사용 (OpenAI 클라이언트)
-                    try:
-                        from openai import OpenAI
-                        client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-                        response = client.chat.completions.create(
-                            model="gpt-3.5-turbo",
-                            messages=[
-                                {"role": "system", "content": "You are a helpful assistant."},
-                                {"role": "user", "content": "Hello!"}
-                            ],
-                            max_tokens=5
-                        )
-                        if response:
-                            connections["openai"] = True
-                    except Exception as client_error:
-                        # 모든 방법이 실패하면 오류 메시지 추가
-                        connections["error_messages"].append(f"OpenAI API 호환성 오류: {str(client_error)}")
+                # OpenAI 0.28 버전 API 호출
+                response = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant."},
+                        {"role": "user", "content": "Hello!"}
+                    ],
+                    max_tokens=5
+                )
+                
+                if response and hasattr(response.choices[0], 'message'):
+                    connections["openai"] = True
+                else:
+                    connections["error_messages"].append("OpenAI API 응답 형식이 예상과 다릅니다.")
             except Exception as e:
                 connections["error_messages"].append(f"OpenAI API 오류: {str(e)}")
         else:
