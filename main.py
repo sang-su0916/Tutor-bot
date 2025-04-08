@@ -14,46 +14,40 @@ try:
     from sheets_utils import connect_to_sheets, get_random_problem, save_student_answer, get_worksheet_records
     from gpt_feedback import generate_feedback
     import admin  # 관리자 모듈 추가
-    from student_analytics import get_problem_for_student, update_problem_stats, show_student_performance_dashboard  # 취약점 분석 모듈 추가
-except ImportError as e:
-    st.error(f"모듈을 불러올 수 없습니다: {e}")
-    
-    # 대체 함수 정의
-    def get_random_problem():
-        return {
-            "문제ID": "dummy-1",
-            "과목": "영어",
-            "학년": "중1",
-            "문제유형": "객관식",
-            "난이도": "하",
-            "문제내용": "Pick the correct word to complete: The cat ___ to school.",
-            "보기1": "went",
-            "보기2": "gone",
-            "보기3": "going",
-            "보기4": "goes",
-            "보기5": "go",
-            "정답": "보기4",
-            "키워드": "동사 시제",
-            "해설": "현재 시제를 사용해야 합니다. 주어가 'The cat'으로 3인칭 단수이므로 'goes'가 정답입니다."
-        }
-    
-    def save_student_answer(student_id, student_name, problem_id, submitted_answer, score, feedback):
-        return True
-    
-    def generate_feedback(question, student_answer, correct_answer, explanation):
-        if student_answer == correct_answer:
-            return 100, "정답입니다! 해설을 읽고 개념을 더 깊이 이해해보세요."
-        else:
-            return 0, "틀렸습니다. 해설을 잘 읽고 다시 한 번 풀어보세요."
-    
-    def get_problem_for_student(student_id, available_problems):
-        return get_random_problem()
-    
-    def update_problem_stats(student_id, problem_id, keywords, is_correct):
-        return True
-    
-    def show_student_performance_dashboard(student_id, student_name, grade, level):
-        st.info("학생 성적 대시보드를 표시할 수 없습니다.")
+    import student_analytics  # 학생 분석 모듈
+    try:
+        from student_analytics import (
+            get_problem_for_student,
+            update_problem_stats,
+            show_student_performance_dashboard
+        )
+    except ImportError:
+        # 모듈 없을 경우 더미 함수 정의
+        def get_problem_for_student(student_id, available_problems):
+            import random
+            return random.choice(available_problems) if available_problems else None
+        
+        def update_problem_stats(student_id, problem_id, keywords, is_correct):
+            pass
+        
+        def show_student_performance_dashboard(student_id, student_name, grade, level):
+            pass
+except Exception as e:
+    import streamlit as st
+    st.error(f"모듈 임포트 오류: {str(e)}")
+
+# OpenAI API 초기화
+try:
+    import openai
+    if "OPENAI_API_KEY" in st.secrets:
+        openai.api_key = st.secrets["OPENAI_API_KEY"]
+        # API 버전 확인 및 필요한 경우 v0 API 사용 설정
+        if hasattr(openai, '_set_api_version'):
+            openai._set_api_version('v0')
+except ImportError:
+    st.error("OpenAI 모듈을 불러올 수 없습니다.")
+except Exception as e:
+    st.error(f"OpenAI API 초기화 오류: {str(e)}")
 
 # 페이지 설정
 st.set_page_config(
