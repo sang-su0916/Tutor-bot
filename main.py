@@ -1093,6 +1093,18 @@ def exam_score_page():
             try:
                 # API에서 피드백 생성
                 from gpt_feedback import generate_feedback
+                
+                # 보기정보 유효성 검사 및 변환
+                options_info = problem_data.get("보기정보", {})
+                # 보기정보가 문자열인 경우 딕셔너리로 변환
+                if isinstance(options_info, str):
+                    try:
+                        import json
+                        options_info = json.loads(options_info)
+                    except:
+                        # JSON 변환 실패 시 빈 딕셔너리로 설정
+                        options_info = {}
+                
                 # 문제 데이터를 문자열에서 딕셔너리 형태로 변환하여 함수에 전달
                 problem_dict = {
                     "문제내용": question,
@@ -1102,7 +1114,7 @@ def exam_score_page():
                     "과목": problem_data.get("과목", ""),
                     "학년": problem_data.get("학년", ""),
                     "난이도": problem_data.get("난이도", ""),
-                    "보기정보": problem_data.get("보기정보", {})
+                    "보기정보": options_info
                 }
                 
                 score, feedback = generate_feedback(problem_dict, student_answer)
