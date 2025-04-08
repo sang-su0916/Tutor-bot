@@ -709,16 +709,22 @@ def exam_page():
         submit_button = st.form_submit_button("시험지 제출하기", use_container_width=True)
         
         if submit_button:
-            # 제출 처리
-            with st.spinner("답안 제출 중..."):
-                # 결과 처리 - 별도 함수로 추출
-                process_exam_results()
-                
+            # 제출 처리 - 버튼이 눌렸다는 상태 미리 저장
+            st.session_state.form_submitted = True
+
+    # 폼 제출 후 처리 - 폼 바깥에서 처리하여 재렌더링 문제 해결
+    if st.session_state.get('form_submitted', False) and not st.session_state.get('exam_submitted', False):
+        with st.spinner("답안 제출 중..."):
+            # 결과 처리 - 별도 함수로 추출
+            success = process_exam_results()
+            if success:
                 st.session_state.exam_submitted = True
+                st.session_state.form_submitted = False
                 st.session_state.page = "exam_score"
-                # 세션 지속을 위한 플래그
-                st.session_state.submit_complete = True
                 st.rerun()
+            else:
+                st.error("결과 처리 중 오류가 발생했습니다. 다시 시도해주세요.")
+                st.session_state.form_submitted = False
     
     # 대시보드로 돌아가기
     if st.button("← 대시보드로 돌아가기", use_container_width=True):
@@ -735,8 +741,12 @@ def process_exam_results():
     """시험 결과를 처리하고 세션에 저장합니다."""
     # 이미 처리된 경우 건너뛰기
     if 'exam_results' in st.session_state:
-        return
+        return True
     
+    if not st.session_state.student_answers:
+        st.warning("제출된 답안이 없습니다.")
+        return False
+        
     try:
         results = {}
         total_score = 0
@@ -755,6 +765,18 @@ def process_exam_results():
                 continue
                 
             student_answer = problem_data['제출답안']
+            
+            # 정답 필드가 없는 경우 처리
+            if '정답' not in problem_data:
+                st.warning(f"문제 ID: {problem_id}에 정답 필드가 없습니다.")
+                results[problem_id] = {
+                    'score': 0,
+                    'is_correct': False,
+                    'student_answer': student_answer,
+                    'correct_answer': "정답 정보 없음"
+                }
+                continue
+                
             correct_answer = problem_data['정답']
             
             # 단답형 또는 객관식 여부 확인
@@ -822,6 +844,7 @@ def process_exam_results():
         return True
     except Exception as e:
         print(f"시험 결과 처리 오류: {str(e)}")
+        st.error(f"결과 처리 중 오류: {str(e)}")
         # 오류 발생 시 기본값 설정
         st.session_state.exam_results = {
             'details': {},
@@ -854,10 +877,10 @@ def exam_score_page():
     if 'exam_results' not in st.session_state:
         # 결과가 없는 경우 다시 생성 시도
         with st.spinner("시험 결과를 처리 중입니다..."):
-            process_exam_results()
+            success = process_exam_results()
             
         # 여전히 결과가 없는 경우
-        if 'exam_results' not in st.session_state:
+        if not success or 'exam_results' not in st.session_state:
             st.error("시험 결과를 처리할 수 없습니다. 대시보드로 돌아가세요.")
             if st.button("대시보드로 돌아가기"):
                 st.session_state.page = "student_dashboard"
