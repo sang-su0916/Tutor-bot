@@ -1094,8 +1094,39 @@ def check_api_connections():
                 # Gemini API 초기화
                 genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
                 
-                # 간단한 API 호출 테스트
-                model = genai.GenerativeModel('gemini-pro')
+                # 안전 설정 및 생성 설정
+                safety_settings = [
+                    {
+                        "category": "HARM_CATEGORY_HARASSMENT",
+                        "threshold": "BLOCK_NONE",
+                    },
+                    {
+                        "category": "HARM_CATEGORY_HATE_SPEECH",
+                        "threshold": "BLOCK_NONE",
+                    },
+                    {
+                        "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                        "threshold": "BLOCK_NONE",
+                    },
+                    {
+                        "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                        "threshold": "BLOCK_NONE",
+                    },
+                ]
+                
+                generation_config = {
+                    "temperature": 0.7,
+                    "top_p": 0.95,
+                    "top_k": 40,
+                    "max_output_tokens": 100,
+                }
+                
+                # 간단한 API 호출 테스트 - gemini-1.5-flash 모델 사용
+                model = genai.GenerativeModel(
+                    model_name="gemini-1.5-flash",
+                    generation_config=generation_config,
+                    safety_settings=safety_settings
+                )
                 response = model.generate_content("Hello!")
                 
                 # 응답이 있으면 연결 성공
