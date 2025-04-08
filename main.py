@@ -538,7 +538,6 @@ def exam_page():
             st.session_state.exam_problems = None  # 이미 로드된 문제가 있으면 초기화
             st.session_state.exam_answered_count = 0
             st.session_state.exam_start_time = time.time()
-            st.session_state.exam_time_limit = 50 * 60  # 50분
             
             # 시험 문제 로드
             st.session_state.exam_problems = load_exam_problems(
@@ -558,82 +557,8 @@ def exam_page():
     # 헤더 표시
     st.title("시험지")
     
-    # 자동 타이머 업데이트를 위한 현재 시간 (매 렌더링마다 갱신)
-    current_time = time.time()
-    
-    # 남은 시간 계산
-    elapsed_time = current_time - st.session_state.exam_start_time
-    remaining_time = max(0, st.session_state.exam_time_limit - elapsed_time)
-    minutes, seconds = divmod(int(remaining_time), 60)
-    
-    # 학생 정보 및 남은 시간 표시
-    st.markdown(f"### 남은 시간: {minutes:02d}:{seconds:02d}")
+    # 학생 정보 표시 (타이머 제거)
     st.markdown(f"학생: {st.session_state.student_name} | 학년: {st.session_state.student_grade} | 실력등급: {st.session_state.student_level}")
-    
-    # 자동 타이머 업데이트 스크립트
-    # 페이지 자체는 새로고침하지 않고 시간만 업데이트
-    timer_js = f"""
-    <script>
-        // 시작 시간 설정
-        var startTime = {st.session_state.exam_start_time * 1000};
-        var timeLimit = {st.session_state.exam_time_limit * 1000};
-        
-        // 시간 업데이트 함수
-        function updateTimer() {{
-            var now = new Date().getTime();
-            var elapsed = now - startTime;
-            var remaining = Math.max(0, timeLimit - elapsed);
-            
-            // 남은 시간 계산
-            var minutes = Math.floor(remaining / 60000);
-            var seconds = Math.floor((remaining % 60000) / 1000);
-            
-            // 표시 형식 설정
-            var timeString = String(minutes).padStart(2, '0') + ":" + String(seconds).padStart(2, '0');
-            
-            // 타이머 요소 업데이트
-            var timerElement = document.querySelector('h3');
-            if (timerElement) {{
-                timerElement.textContent = "남은 시간: " + timeString;
-            }}
-            
-            // 시간이 다 되면 자동 제출
-            if (remaining <= 0) {{
-                // 자동 제출 폼 제출
-                var submitBtn = document.querySelector('button[kind="primaryFormSubmit"]');
-                if (submitBtn && !window.autoSubmitted) {{
-                    window.autoSubmitted = true;
-                    submitBtn.click();
-                }} else {{
-                    // 3초 후 페이지 새로고침 (자동 제출을 위한 시간차)
-                    setTimeout(function() {{
-                        window.location.reload();
-                    }}, 3000);
-                }}
-                return;
-            }}
-            
-            // 1초마다 업데이트
-            setTimeout(updateTimer, 1000);
-        }}
-        
-        // 타이머 시작
-        updateTimer();
-    </script>
-    """
-    
-    st.markdown(timer_js, unsafe_allow_html=True)
-    
-    # 남은 시간이 0이면 자동 제출
-    if remaining_time <= 0 and 'exam_submitted' not in st.session_state:
-        st.warning("시험 시간이 종료되었습니다! 자동으로 제출됩니다.")
-        
-        # 자동 제출 처리 - 결과 생성 먼저 수행
-        process_exam_results()
-        
-        st.session_state.exam_submitted = True
-        st.session_state.page = "exam_score"
-        st.rerun()
     
     # 시험 진행 상태
     actual_problem_count = len(st.session_state.exam_problems)
@@ -1374,7 +1299,14 @@ def problem_page():
         st.rerun()
 
 def main():
-    """메인 함수"""
+    """메인 애플리케이션 함수"""
+    # 세션 상태 초기화
+    initialize_session_state()
+    
+    # 타이머 시간 제한 설정 (50분 = 3000초) - 이 부분은 남겨두거나 필요에 따라 제거
+    if 'exam_time_limit' not in st.session_state:
+        st.session_state.exam_time_limit = 50 * 60  # 50분
+    
     # CSS 스타일
     hide_streamlit_style = """
     <style>
