@@ -2,6 +2,7 @@ import streamlit as st
 import time
 import uuid
 import random  # random 모듈 추가
+import traceback
 
 # 페이지 설정 - 가장 먼저 호출되어야 함
 st.set_page_config(
@@ -598,10 +599,17 @@ def exam_page():
             
             // 시간이 다 되면 자동 제출
             if (remaining <= 0) {{
-                // 3초 후 페이지 새로고침 (자동 제출을 위한 시간차)
-                setTimeout(function() {{
-                    window.location.reload();
-                }}, 3000);
+                // 자동 제출 폼 제출
+                var submitBtn = document.querySelector('button[kind="primaryFormSubmit"]');
+                if (submitBtn && !window.autoSubmitted) {{
+                    window.autoSubmitted = true;
+                    submitBtn.click();
+                }} else {{
+                    // 3초 후 페이지 새로고침 (자동 제출을 위한 시간차)
+                    setTimeout(function() {{
+                        window.location.reload();
+                    }}, 3000);
+                }}
                 return;
             }}
             
@@ -780,7 +788,7 @@ def process_exam_results():
             correct_answer = problem_data['정답']
             
             # 단답형 또는 객관식 여부 확인
-            is_objective = correct_answer.startswith("보기")
+            is_objective = str(correct_answer).startswith("보기")
             
             if is_objective:
                 # 객관식 문제는 정확히 일치해야 함
@@ -788,7 +796,7 @@ def process_exam_results():
             else:
                 # 단답형 문제는 대소문자, 공백 무시
                 normalized_student = student_answer.lower().strip() if student_answer else ""
-                normalized_correct = correct_answer.lower().strip()
+                normalized_correct = correct_answer.lower().strip() if correct_answer else ""
                 is_correct = (normalized_student == normalized_correct)
             
             score = 100 if is_correct else 0
@@ -845,6 +853,9 @@ def process_exam_results():
     except Exception as e:
         print(f"시험 결과 처리 오류: {str(e)}")
         st.error(f"결과 처리 중 오류: {str(e)}")
+        traceback_str = traceback.format_exc()
+        print(f"상세 오류: {traceback_str}")
+        
         # 오류 발생 시 기본값 설정
         st.session_state.exam_results = {
             'details': {},
