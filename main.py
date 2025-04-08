@@ -67,6 +67,7 @@ except Exception as e:
 
 # URL 파라미터 확인 - 재시작 명령 처리
 def check_reset_command():
+    """URL 파라미터에서 리셋 명령을 확인합니다."""
     try:
         query_params = st.query_params
         if "reset" in query_params and query_params["reset"] == "true":
@@ -82,25 +83,26 @@ def check_reset_command():
         pass
     return False
 
-# 세션 상태 초기화
-if check_reset_command() or "initialized" not in st.session_state:
-    st.session_state.student_id = None
-    st.session_state.student_name = None
-    st.session_state.student_grade = None
-    st.session_state.student_level = None
-    st.session_state.current_problem = None
-    st.session_state.submitted = False
-    st.session_state.feedback = None
-    st.session_state.score = None
-    st.session_state.show_result = False
-    st.session_state.is_multiple_choice = False
-    st.session_state.previous_problems = set()
-    st.session_state.current_round = 1
-    st.session_state.initialized = True
-    st.session_state.page = "intro"
-    st.session_state.student_answer = None
-    # 초기화 완료 표시
-    st.session_state.setup_complete = True
+def initialize_session_state():
+    """세션 상태를 초기화합니다."""
+    if check_reset_command() or "initialized" not in st.session_state:
+        st.session_state.student_id = None
+        st.session_state.student_name = None
+        st.session_state.student_grade = None
+        st.session_state.student_level = None
+        st.session_state.current_problem = None
+        st.session_state.submitted = False
+        st.session_state.feedback = None
+        st.session_state.score = None
+        st.session_state.show_result = False
+        st.session_state.is_multiple_choice = False
+        st.session_state.previous_problems = set()
+        st.session_state.current_round = 1
+        st.session_state.initialized = True
+        st.session_state.page = "intro"
+        st.session_state.student_answer = None
+        # 초기화 완료 표시
+        st.session_state.setup_complete = True
 
 def intro_page():
     """시작 페이지"""
