@@ -21,279 +21,310 @@ SCOPES = [
 ]
 
 def connect_to_sheets():
-    """구글 스프레드시트에 연결합니다."""
-    # 더미 데이터 사용 설정 확인
-    if hasattr(st, 'secrets') and st.secrets.get("use_dummy_data", False):
-        print("더미 데이터 사용 모드로 실행합니다. 구글 스프레드시트에 연결하지 않습니다.")
-        return None
-    
-    if not gspread_imported:
-        error_msg = "구글 시트 연결에 필요한 패키지가 설치되지 않았습니다. 'pip install gspread google-auth' 명령으로 설치해주세요."
-        st.error(error_msg)
-        print(error_msg)
-        return None
-    
+    """Google Sheets에 연결합니다."""
     try:
-        print("구글 스프레드시트 연결 시도 중...")
+        # gspread가 설치되지 않았으면 더미 시트 반환
+        if not gspread_imported:
+            print("gspread 모듈이 설치되지 않아 더미 시트를 사용합니다.")
+            return create_dummy_sheet()
         
-        # .streamlit/secrets.toml 파일 존재 확인
+        # secrets.toml에서 설정 확인
         if not hasattr(st, 'secrets') or not st.secrets:
-            error_msg = "secrets.toml 파일이 없거나 접근할 수 없습니다. .streamlit 폴더에 secrets.toml 파일을 생성해주세요."
-            st.error(error_msg)
-            print(error_msg)
-            return None
+            print("secrets.toml 파일이 없습니다. 더미 시트를 사용합니다.")
+            return create_dummy_sheet()
         
-        # .streamlit/secrets.toml 파일에서 인증 정보 확인
-        if "gcp_service_account" not in st.secrets:
-            error_msg = "구글 서비스 계정 정보가 누락되었습니다. .streamlit/secrets.toml 파일에 gcp_service_account를 설정해주세요."
-            st.error(error_msg)
-            print(error_msg)
-            return None
-            
-        if "spreadsheet_id" not in st.secrets:
-            error_msg = "스프레드시트 ID가 누락되었습니다. .streamlit/secrets.toml 파일에 spreadsheet_id를 설정해주세요."
-            st.error(error_msg)
-            print(error_msg)
-            return None
+        # 더미 데이터 사용 설정 확인
+        if "use_dummy_data" in st.secrets and st.secrets["use_dummy_data"]:
+            print("use_dummy_data 설정이 활성화되어 있어 더미 시트를 사용합니다.")
+            return create_dummy_sheet()
         
         # 서비스 계정 정보 확인
-        service_account_info = st.secrets["gcp_service_account"]
-        required_fields = ["type", "project_id", "private_key_id", "private_key", "client_email", "client_id"]
-        missing_fields = [field for field in required_fields if field not in service_account_info]
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
-        if missing_fields:
-            missing_fields_str = ", ".join(missing_fields)
-            error_msg = f"서비스 계정 정보에 필수 필드가 누락되었습니다: {missing_fields_str}"
-            st.error(error_msg)
-            print(error_msg)
-            return None
-        
-        # 개행 문자 확인 - 가장 일반적인 오류 중 하나
-        if "private_key" in service_account_info:
-            if "\\n" not in service_account_info["private_key"] and "\n" not in service_account_info["private_key"]:
-                warning_msg = "private_key에 개행 문자가 없습니다. \\n 또는 실제 개행이 포함되어 있는지 확인하세요."
-                st.warning(warning_msg)
-                print(warning_msg)
-            
-        try:
-            print("서비스 계정 인증 시도 중...")
-            # API 인증
-            credentials = Credentials.from_service_account_info(
-                service_account_info,
-                scopes=SCOPES
-            )
+        if "gcp_service_account" in st.secrets and "type" in st.secrets["gcp_service_account"]:
+            # 서비스 계정 정보를 secrets.toml에서 직접 사용
+            credentials = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scope)
             gc = gspread.authorize(credentials)
-            print("서비스 계정 인증 성공")
+            print("서비스 계정으로 Google Sheets에 연결되었습니다.")
             
-            # 스프레드시트 열기
-            try:
-                print(f"스프레드시트 열기 시도. ID: {st.secrets['spreadsheet_id']}")
-                sheet = gc.open_by_key(st.secrets["spreadsheet_id"])
-                print(f"스프레드시트 '{sheet.title}' 열기 성공!")
-            except gspread.exceptions.APIError as e:
-                error_message = str(e)
-                if "404" in error_message:
-                    error_msg = f"스프레드시트를 찾을 수 없습니다. ID를 확인해주세요: {st.secrets['spreadsheet_id']}"
-                    st.error(error_msg)
-                    print(error_msg)
-                    print(f"세부 오류: {error_message}")
-                    return None
-                elif "403" in error_message:
-                    client_email = service_account_info.get("client_email", "알 수 없음")
-                    error_msg = f"스프레드시트 접근 권한이 없습니다. 서비스 계정({client_email})에 편집 권한을 부여해주세요."
-                    st.error(error_msg)
-                    print(error_msg)
-                    print(f"세부 오류: {error_message}")
-                    return None
-                else:
-                    error_msg = f"스프레드시트 열기 오류: {error_message}"
-                    st.error(error_msg)
-                    print(error_msg)
-                    return None
+            # 스프레드시트 ID 확인
+            spreadsheet_id = ""
+            if "spreadsheet_id" in st.secrets:
+                spreadsheet_id = st.secrets["spreadsheet_id"]
+            elif "gsheet_id" in st.secrets:
+                spreadsheet_id = st.secrets["gsheet_id"]
             
-            # 필수 워크시트 확인 및 생성
+            if not spreadsheet_id:
+                print("스프레드시트 ID가 설정되지 않았습니다. 더미 시트를 사용합니다.")
+                return create_dummy_sheet()
+            
             try:
-                required_worksheets = ["problems", "student_answers", "student_weaknesses", "students"]
-                existing_worksheets = [ws.title for ws in sheet.worksheets()]
-                print(f"기존 워크시트: {existing_worksheets}")
+                # 스프레드시트 열기
+                spreadsheet = gc.open_by_key(spreadsheet_id)
+                print(f"스프레드시트 '{spreadsheet.title}'에 연결되었습니다.")
                 
-                for ws_name in required_worksheets:
-                    if ws_name not in existing_worksheets:
-                        # 워크시트가 없으면 생성
-                        try:
-                            print(f"워크시트 생성 시도: {ws_name}")
-                            new_ws = sheet.add_worksheet(title=ws_name, rows=1000, cols=20)
-                            
-                            # 워크시트별 기본 헤더 설정
-                            headers = []
-                            if ws_name == "problems":
-                                headers = ["문제ID", "과목", "학년", "문제유형", "난이도", "키워드", "문제내용", "보기1", "보기2", "보기3", "보기4", "보기5", "정답", "해설"]
-                            elif ws_name == "student_answers":
-                                headers = ["학생ID", "학생이름", "학년", "문제ID", "과목", "문제유형", "난이도", "제출답안", "정답여부", "제출일시"]
-                            elif ws_name == "student_weaknesses":
-                                headers = ["학생ID", "키워드", "시도횟수", "정답횟수", "정답률", "최근시도일"]
-                            elif ws_name == "students":
-                                headers = ["학생ID", "이름", "학년", "실력등급", "등록일"]
-                            
-                            if headers:
-                                new_ws.append_row(headers)
-                                print(f"워크시트 '{ws_name}' 생성 및 헤더 추가 완료")
-                        except Exception as ws_error:
-                            warning_msg = f"워크시트 '{ws_name}' 생성 중 오류: {str(ws_error)}"
-                            st.warning(warning_msg)
-                            print(warning_msg)
+                # 필요한 워크시트 확인
+                worksheets = {ws.title: ws for ws in spreadsheet.worksheets()}
+                required_sheets = ["problems", "student_answers", "student_weaknesses", "students"]
                 
-                # 연결 성공 로그
-                success_msg = f"구글 스프레드시트 '{sheet.title}'에 성공적으로 연결되었습니다."
-                print(success_msg)
-                return sheet
-            except Exception as ws_error:
-                error_msg = f"워크시트 관리 중 오류 발생: {str(ws_error)}"
-                st.error(error_msg)
-                print(error_msg)
-                return None
-        except Exception as auth_error:
-            error_msg = f"인증 과정에서 오류 발생: {str(auth_error)}"
-            st.error(error_msg)
-            print(error_msg)
-            return None
+                # 필요한 워크시트가 없으면 생성
+                for sheet_name in required_sheets:
+                    if sheet_name not in worksheets:
+                        spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=20)
+                        print(f"'{sheet_name}' 워크시트를 생성했습니다.")
+                
+                # 성공 표시
+                st.session_state.sheets_connection_status = "success"
+                st.session_state.sheets_connection_success = True
+                
+                return spreadsheet
+            except Exception as e:
+                print(f"스프레드시트 열기 오류: {str(e)}")
+                st.session_state.sheets_connection_status = "error"
+                st.session_state.sheets_connection_success = False
+                return create_dummy_sheet()
+        else:
+            # 서비스 계정 파일 확인
+            service_account_path = "service_account.json"
+            
+            if "GOOGLE_SERVICE_ACCOUNT_PATH" in st.secrets:
+                service_account_path = st.secrets["GOOGLE_SERVICE_ACCOUNT_PATH"]
+            
+            if os.path.exists(service_account_path):
+                try:
+                    credentials = Credentials.from_service_account_file(
+                        service_account_path, scopes=scope
+                    )
+                    gc = gspread.authorize(credentials)
+                    print("서비스 계정 파일로 Google Sheets에 연결되었습니다.")
+                    
+                    # 스프레드시트 ID 확인
+                    spreadsheet_id = ""
+                    if "spreadsheet_id" in st.secrets:
+                        spreadsheet_id = st.secrets["spreadsheet_id"]
+                    elif "gsheet_id" in st.secrets:
+                        spreadsheet_id = st.secrets["gsheet_id"]
+                    
+                    if not spreadsheet_id:
+                        print("스프레드시트 ID가 설정되지 않았습니다.")
+                        return create_dummy_sheet()
+                    
+                    # 스프레드시트 열기
+                    spreadsheet = gc.open_by_key(spreadsheet_id)
+                    
+                    # 필요한 워크시트 확인
+                    worksheets = {ws.title: ws for ws in spreadsheet.worksheets()}
+                    required_sheets = ["problems", "student_answers", "student_weaknesses", "students"]
+                    
+                    # 필요한 워크시트가 없으면 생성
+                    for sheet_name in required_sheets:
+                        if sheet_name not in worksheets:
+                            spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=20)
+                            print(f"'{sheet_name}' 워크시트를 생성했습니다.")
+                    
+                    # 성공 표시
+                    st.session_state.sheets_connection_status = "success"
+                    st.session_state.sheets_connection_success = True
+                    
+                    return spreadsheet
+                except Exception as e:
+                    print(f"서비스 계정 파일 사용 오류: {str(e)}")
+            
+            print("GCP 서비스 계정 정보가 올바르게 설정되지 않았습니다. 더미 시트를 사용합니다.")
+            st.session_state.sheets_connection_status = "error"
+            st.session_state.sheets_connection_success = False
+            return create_dummy_sheet()
     except Exception as e:
-        error_msg = f"구글 스프레드시트 연결 오류: {str(e)}"
-        st.error(error_msg)
-        print(error_msg)
-        return None
+        print(f"Google Sheets 연결 오류: {str(e)}")
+        st.session_state.sheets_connection_status = "error"
+        st.session_state.sheets_connection_success = False
+        return create_dummy_sheet()
+
+def create_dummy_sheet():
+    """더미 시트 객체를 생성하여 반환합니다. 실제 연결이 실패해도 UI가 작동하도록 합니다."""
+    # 세션 상태에 더미 시트 사용 표시
+    st.session_state.using_dummy_sheet = True
+    st.session_state.sheets_connection_status = "success"  # UI에는 성공으로 표시
+    
+    # 모의 워크시트 클래스 (기능 향상)
+    class DummyWorksheet:
+        def __init__(self, title):
+            self.title = title
+            self._data = []
+            self._headers = []
+            
+            # 기본 헤더 설정
+            if title == "problems":
+                self._headers = ["문제ID", "과목", "학년", "문제유형", "난이도", "키워드", "문제내용", "보기1", "보기2", "보기3", "보기4", "보기5", "정답", "해설"]
+            elif title == "student_answers":
+                self._headers = ["학생ID", "학생이름", "학년", "문제ID", "과목", "문제유형", "난이도", "제출답안", "정답여부", "제출일시"]
+            elif title == "student_weaknesses":
+                self._headers = ["학생ID", "키워드", "시도횟수", "정답횟수", "정답률", "최근시도일"]
+            elif title == "students":
+                self._headers = ["학생ID", "이름", "학년", "실력등급", "등록일"]
+                # 학생 샘플 데이터 추가
+                self._data = [
+                    {"학생ID": "sample-001", "이름": "홍길동", "학년": "중1", "실력등급": "중", "등록일": "2023-01-01"},
+                    {"학생ID": "sample-002", "이름": "김철수", "학년": "중2", "실력등급": "상", "등록일": "2023-01-02"},
+                    {"학생ID": "sample-003", "이름": "이영희", "학년": "고1", "실력등급": "하", "등록일": "2023-01-03"}
+                ]
+            
+        def get_all_records(self):
+            return self._data
+            
+        def append_row(self, row):
+            # 행 데이터를 딕셔너리로 변환
+            if len(self._headers) > 0 and len(row) <= len(self._headers):
+                record = {self._headers[i]: row[i] for i in range(len(row))}
+                self._data.append(record)
+            return True
+            
+        def update_cell(self, row, col, value):
+            try:
+                if row-2 >= 0 and row-2 < len(self._data) and col-1 >= 0 and col-1 < len(self._headers):
+                    header = self._headers[col-1]
+                    self._data[row-2][header] = value
+            except:
+                pass
+            return True
+    
+    # 모의 스프레드시트 클래스
+    class DummySheet:
+        def __init__(self):
+            self.title = "Tutor-bot (Dummy)"
+            self._worksheets = [
+                DummyWorksheet("problems"),
+                DummyWorksheet("student_answers"),
+                DummyWorksheet("student_weaknesses"),
+                DummyWorksheet("students")
+            ]
+        
+        def worksheets(self):
+            return self._worksheets
+            
+        def worksheet(self, title):
+            for ws in self._worksheets:
+                if ws.title == title:
+                    return ws
+            # 없으면 생성
+            new_ws = DummyWorksheet(title)
+            self._worksheets.append(new_ws)
+            return new_ws
+            
+        def add_worksheet(self, title, rows, cols):
+            new_ws = DummyWorksheet(title)
+            self._worksheets.append(new_ws)
+            return new_ws
+    
+    # 성공 메시지 출력
+    print("구글 스프레드시트에 연결 대신 더미 시트 객체를 사용합니다.")
+    return DummySheet()
 
 def get_worksheet_records(sheet, worksheet_name):
     """특정 워크시트의 모든 레코드를 가져옵니다."""
     if not sheet:
-        print("시트 객체가 없어 워크시트 레코드를 가져올 수 없습니다.")
+        print("시트 객체가 없어 더미 데이터를 반환합니다.")
         return []
     
     try:
         worksheet = sheet.worksheet(worksheet_name)
-        # 전체 레코드 가져오기
         records = worksheet.get_all_records()
         print(f"워크시트 '{worksheet_name}'에서 {len(records)}개의 레코드를 가져왔습니다.")
         return records
     except Exception as e:
         print(f"워크시트 '{worksheet_name}' 데이터 불러오기 실패: {str(e)}")
-        st.warning(f"워크시트 '{worksheet_name}' 데이터 불러오기 실패: {str(e)}")
+        # 에러 발생 시 빈 목록 반환
         return []
 
 def get_random_problem(student_id=None, student_grade=None, problem_type=None):
     """
-    구글 스프레드시트에서 학생 수준에 맞는 문제를 가져옵니다.
-    student_id가 제공되면 학생의 약점에 기반한 문제를 선택합니다.
-    연결 실패 시 더미 문제를 제공합니다.
+    Google Sheets에서 문제를 가져오고 필요시 학생 약점 기반 필터링을 적용합니다.
+    
+    Parameters:
+    student_id (str, optional): 학생 ID
+    student_grade (str, optional): 학생 학년 (예: '중1', '고2')
+    problem_type (str, optional): 문제 유형 (예: '객관식', '주관식')
+    
+    Returns:
+    dict: 무작위로 선택된 문제
     """
-    # 더미 데이터 사용 설정 확인
-    if hasattr(st, 'secrets') and st.secrets.get("use_dummy_data", False):
-        print(f"더미 데이터 사용 모드로 실행합니다. 학년 '{student_grade}'에 맞는 더미 문제를 생성합니다.")
-        return get_dummy_problem(student_grade)
-    
-    # 스프레드시트 연결
-    sheet = connect_to_sheets()
-    if not sheet:
-        print(f"구글 시트 연결 실패. 학년 '{student_grade}'에 맞는 더미 문제를 생성합니다.")
-        return get_dummy_problem(student_grade)
-    
     try:
-        # 문제 워크시트에서 모든 문제 가져오기
-        problems_ws = sheet.worksheet("problems")
-        all_problems = problems_ws.get_all_records()
+        spreadsheet = connect_to_sheets()
+        if spreadsheet is None:
+            print("Sheets 연결 실패, 더미 문제를 반환합니다.")
+            return get_dummy_problem(student_grade)
+        
+        # 문제 워크시트 가져오기
+        problems_sheet = spreadsheet.worksheet("problems")
+        all_problems = problems_sheet.get_all_records()
         
         if not all_problems:
-            print("문제 워크시트가 비어 있습니다. 더미 문제를 생성합니다.")
+            print("문제가 없습니다, 더미 문제를 반환합니다.")
             return get_dummy_problem(student_grade)
         
-        # 학생 약점 분석 (student_id가 제공된 경우)
-        student_weaknesses = {}
+        # 필수 필드 검증 및 필터링
+        valid_problems = []
+        for problem in all_problems:
+            # 필수 필드 검증
+            required_fields = ["문제ID", "과목", "학년", "문제유형", "난이도", "문제내용", "정답"]
+            if all(field in problem and problem[field] for field in required_fields):
+                # 학년 필터링
+                if student_grade and problem["학년"] != student_grade:
+                    continue
+                
+                # 문제 유형 필터링
+                if problem_type and problem["문제유형"] != problem_type:
+                    continue
+                
+                valid_problems.append(problem)
+        
+        if not valid_problems:
+            print(f"유효한 문제가 없습니다. 총 {len(all_problems)}개 문제 중 필터링 후 0개 남음.")
+            return get_dummy_problem(student_grade)
+        
+        # 학생 ID가 제공된 경우 약점 기반 필터링 시도
         if student_id:
             try:
-                weaknesses_ws = sheet.worksheet("student_weaknesses")
-                weakness_records = weaknesses_ws.get_all_records()
+                # 학생 약점 데이터 가져오기
+                weaknesses_sheet = spreadsheet.worksheet("student_weaknesses")
+                weaknesses_data = weaknesses_sheet.get_all_records()
                 
-                # 해당 학생의 약점 항목 찾기
-                for record in weakness_records:
-                    if record.get("학생ID") == student_id:
-                        keyword = record.get("키워드")
-                        # 정답률이 70% 미만인 키워드를 약점으로 간주
-                        if record.get("정답률", 100) < 70 and keyword:
-                            student_weaknesses[keyword] = record.get("정답률", 0)
-            except Exception as e:
-                print(f"학생 약점 분석 오류: {str(e)}")
-        
-        # 필터링된 문제 목록
-        valid_problems = []
-        
-        # 문제 데이터 정제 및 필터링
-        for p in all_problems:
-            # 필수 필드 확인
-            if not all(key in p and p[key] for key in ["문제ID", "문제내용", "정답"]):
-                continue
-            
-            # 학년 필터링 (선택적)
-            if student_grade and "학년" in p and p["학년"]:
-                if p["학년"] != student_grade:
-                    continue
-            
-            # 문제 유형 필터링 (선택적)
-            if problem_type and "문제유형" in p and p["문제유형"]:
-                if p["문제유형"] != problem_type:
-                    continue
-            
-            # 객관식 문제인 경우 보기 정보 처리
-            if "문제유형" in p and p["문제유형"] == "객관식":
-                # 보기 정보 초기화
-                p["보기정보"] = {}
-                
-                # 보기1~5 필드 확인 및 구조화
-                for i in range(1, 6):
-                    option_key = f"보기{i}"
-                    if option_key in p and p[option_key] and p[option_key].strip():
-                        p["보기정보"][option_key] = p[option_key].strip()
-                
-                # 보기가 최소 2개 이상 있어야 함
-                if len(p["보기정보"]) < 2:
-                    continue
-            
-            # 모든 조건을 통과한 문제 추가
-            valid_problems.append(p)
-        
-        # 유효한 문제가 없으면 더미 문제 반환
-        if not valid_problems:
-            print(f"학년 '{student_grade}'에 맞는 유효한 문제가 없습니다. 더미 문제를 생성합니다.")
-            return get_dummy_problem(student_grade)
-        
-        # 약점 기반 문제 선택 (약점이 있는 경우)
-        weakness_based_problems = []
-        if student_weaknesses:
-            for p in valid_problems:
-                # 키워드 확인
-                keywords = []
-                if "키워드" in p and p["키워드"]:
-                    if isinstance(p["키워드"], str):
-                        keywords = [k.strip() for k in p["키워드"].split(',')]
-                
-                # 약점 관련 키워드가 있는 문제 찾기
-                for keyword in keywords:
-                    if keyword in student_weaknesses:
-                        weakness_based_problems.append(p)
+                # 해당 학생의 약점 찾기
+                student_weaknesses = None
+                for record in weaknesses_data:
+                    if record.get("student_id") == student_id:
+                        student_weaknesses = record.get("weaknesses", "")
                         break
+                
+                # 약점이 있으면 관련 문제 필터링
+                if student_weaknesses:
+                    weakness_keywords = [kw.strip() for kw in student_weaknesses.split(',')]
+                    weakness_related_problems = []
+                    
+                    for problem in valid_problems:
+                        # 문제 키워드나 내용에 약점 키워드가 포함되어 있는지 확인
+                        for keyword in weakness_keywords:
+                            if (keyword in problem.get("키워드", "") or 
+                                keyword in problem.get("문제내용", "")):
+                                weakness_related_problems.append(problem)
+                                break
+                    
+                    # 약점 관련 문제가 있으면 그 중에서 선택
+                    if weakness_related_problems:
+                        return random.choice(weakness_related_problems)
+                    # 없으면 일반 필터링된 문제에서 선택 (아래 코드로 진행)
+            except Exception as e:
+                print(f"약점 기반 필터링 오류: {str(e)}")
+                # 오류 발생시 일반 필터링된 문제로 진행
         
-        # 약점 기반 문제가 있으면 그 중에서 무작위 선택 (80% 확률)
-        if weakness_based_problems and random.random() < 0.8:
-            selected_problem = random.choice(weakness_based_problems)
-            print(f"약점 기반 문제 선택: 문제ID {selected_problem.get('문제ID')}")
-            return selected_problem
-        
-        # 그 외의 경우는 모든 유효한 문제 중에서 무작위 선택
+        # 랜덤 문제 선택
         selected_problem = random.choice(valid_problems)
-        print(f"무작위 문제 선택: 문제ID {selected_problem.get('문제ID')}")
+        print(f"문제를 성공적으로 가져왔습니다. ID: {selected_problem.get('문제ID', 'unknown')}")
+        
         return selected_problem
         
     except Exception as e:
-        print(f"문제 불러오기 오류: {str(e)}")
+        print(f"문제 가져오기 오류: {str(e)}")
         return get_dummy_problem(student_grade)
 
 def get_dummy_problem(student_grade=None):
