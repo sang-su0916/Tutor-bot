@@ -199,63 +199,13 @@ def connect_to_sheets():
                             st.success(f"이름으로 스프레드시트 '{spreadsheet.title}'에 연결되었습니다.")
                             st.session_state.sheets_connection_status = "success"
                             st.session_state.sheets_connection_success = True
-                            st.session_state.using_dummy_sheet = False
                             return spreadsheet
-                        except Exception as e2:
-                            print(f"이름으로 스프레드시트 열기 실패: {str(e2)}")
-                except Exception as list_err:
-                    print(f"스프레드시트 목록 가져오기 실패: {str(list_err)}")
+                        except Exception as e:
+                            print(f"이름으로 스프레드시트 열기 실패: {str(e)}")
+                except Exception as e:
+                    print(f"스프레드시트 접근 시도 중 추가 오류: {str(e)}")
                 
-                # 여전히 실패하면 더미 시트 사용
-                st.error(error_msg)
-                
-                # 오류 처리 개선 - 403 오류는 권한 문제
-                if "403" in str(api_err):
-                    if service_account_email:
-                        share_msg = f"서비스 계정 이메일({service_account_email})이 스프레드시트에 '편집자' 권한으로 공유되어 있는지 확인하세요."
-                        st.error(share_msg)
-                        print(share_msg)
-                
-                # 더미 시트 대신 실제 서비스 계정으로 새 스프레드시트 생성 시도
-                try:
-                    print("새 스프레드시트 생성을 시도합니다.")
-                    new_spreadsheet = gc.create('Tutor-bot-auto-created')
-                    if service_account_email:
-                        # 시트 생성 후 자신에게 공유 - 이미 소유자이므로 필요 없음
-                        # new_spreadsheet.share(service_account_email, perm_type='user', role='writer')
-                        print(f"새 스프레드시트가 생성되었습니다. ID: {new_spreadsheet.id}")
-                        
-                        # secrets.toml 파일 업데이트 안내
-                        st.warning(f"새 스프레드시트가 생성되었습니다. ID: {new_spreadsheet.id}")
-                        st.warning(f".streamlit/secrets.toml 파일의 spreadsheet_id 값을 '{new_spreadsheet.id}'로 업데이트하세요.")
-                        
-                        # 필요한 워크시트 생성
-                        required_sheets = ["problems", "student_answers", "student_weaknesses", "students", "teachers"]
-                        for sheet_name in required_sheets:
-                            new_spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=20)
-                            print(f"'{sheet_name}' 워크시트를 생성했습니다.")
-                        
-                        # 기본 시트 삭제
-                        try:
-                            default_sheet = new_spreadsheet.sheet1
-                            new_spreadsheet.del_worksheet(default_sheet)
-                        except:
-                            pass
-                        
-                        st.session_state.sheets_connection_status = "success"
-                        st.session_state.sheets_connection_success = True
-                        st.session_state.using_dummy_sheet = False
-                        return new_spreadsheet
-                except Exception as create_err:
-                    print(f"새 스프레드시트 생성 실패: {str(create_err)}")
-                
-                # 모든 시도가 실패하면 더미 시트 사용
-                return create_dummy_sheet()
-            except Exception as e:
-                error_msg = f"스프레드시트 접근 중 예기치 않은 오류: {str(e)}"
-                st.error(error_msg)
-                print(error_msg)
-                print(f"상세 오류: {traceback.format_exc()}")
+                # 접근 실패시 더미 시트 사용
                 return create_dummy_sheet()
         except Exception as auth_err:
             error_msg = f"Google API 인증 오류: {str(auth_err)}"
@@ -263,10 +213,10 @@ def connect_to_sheets():
             print(error_msg)
             print(f"상세 오류: {traceback.format_exc()}")
             return create_dummy_sheet()
-            
     except Exception as e:
-        st.error(f"Google Sheets 연결 중 오류가 발생했습니다: {str(e)}")
-        print(f"Google Sheets 연결 중 오류가 발생했습니다: {str(e)}")
+        error_msg = f"Google Sheets 연결 초기화 오류: {str(e)}"
+        st.error(error_msg)
+        print(error_msg)
         print(f"상세 오류: {traceback.format_exc()}")
         return create_dummy_sheet()
 
@@ -350,53 +300,59 @@ def create_dummy_sheet():
     print("구글 스프레드시트에 연결 대신 더미 시트 객체를 사용합니다.")
     return DummySheet()
 
-def get_worksheet_records(sheet, worksheet_name):
-    """특정 워크시트의 모든 레코드를 가져옵니다."""
-    if not sheet:
-        print("시트 객체가 없어 더미 데이터를 반환합니다.")
-        return []
-    
+def get_worksheet_records(sheet, worksheet_name, use_csv_file=False, csv_path=None):
+    """워크시트의 모든 레코드를 가져옵니다."""
     try:
-        # 시트 정보 출력
-        if hasattr(sheet, 'title'):
-            print(f"스프레드시트 '{sheet.title}'에서 '{worksheet_name}' 워크시트 데이터를 가져오는 중...")
+        if use_csv_file and csv_path:
+            import pandas as pd
+            import os
+            
+            # CSV 파일이 존재하는지 확인
+            if not os.path.exists(csv_path):
+                print(f"CSV 파일을 찾을 수 없습니다: {csv_path}")
+                return []
+            
+            try:
+                # CSV 파일 읽기
+                print(f"CSV 파일에서 문제를 불러옵니다: {csv_path}")
+                df = pd.read_csv(csv_path, encoding='utf-8')
+                
+                # DataFrame을 딕셔너리 리스트로 변환
+                records = df.to_dict(orient='records')
+                print(f"CSV 파일에서 {len(records)}개의 문제를 불러왔습니다.")
+                return records
+            except Exception as e:
+                print(f"CSV 파일 읽기 오류: {str(e)}")
+                return []
         
-        # 워크시트 존재 확인
-        try:
-            worksheet = sheet.worksheet(worksheet_name)
-        except Exception as e:
-            print(f"워크시트 '{worksheet_name}'를 찾을 수 없습니다: {str(e)}")
-            print(f"사용 가능한 워크시트: {[ws.title for ws in sheet.worksheets()]}")
+        # Google Sheets에서 데이터 가져오기
+        if not gspread_imported:
+            return []
+            
+        if sheet is None:
+            print("스프레드시트 연결이 없습니다.")
             return []
         
-        # 데이터 가져오기
         try:
+            # 워크시트 가져오기
+            worksheet = sheet.worksheet(worksheet_name)
+            
             # 헤더 확인
             headers = worksheet.row_values(1)
-            print(f"워크시트 '{worksheet_name}' 헤더: {headers}")
+            if not headers:
+                print(f"{worksheet_name} 워크시트에 헤더가 없습니다.")
+                return []
             
-            # 전체 레코드 가져오기
-            records = worksheet.get_all_records()
-            print(f"워크시트 '{worksheet_name}'에서 {len(records)}개의 레코드를 가져왔습니다.")
+            # 모든 레코드 가져오기
+            all_records = worksheet.get_all_records()
+            print(f"{worksheet_name} 워크시트에서 {len(all_records)}개의 레코드를 불러왔습니다.")
             
-            # 레코드 유효성 확인
-            if records and len(records) > 0:
-                print(f"첫 번째 레코드 키: {list(records[0].keys()) if records[0] else 'No keys'}")
-                # 무작위 레코드 중 문제ID 출력해서 다양한 문제가 있는지 확인
-                if len(records) >= 3:
-                    sample_ids = [r.get("문제ID", "No ID") for r in random.sample(records, min(3, len(records)))]
-                    print(f"샘플 문제 ID: {sample_ids}")
-            
-            return records
+            return all_records
         except Exception as e:
-            print(f"워크시트 '{worksheet_name}'에서 데이터를 가져오는 중 오류: {str(e)}")
-            traceback.print_exc()  # 상세 오류 정보 출력
+            print(f"{worksheet_name} 워크시트 데이터 가져오기 오류: {str(e)}")
             return []
-            
     except Exception as e:
-        print(f"워크시트 데이터 불러오기 실패: {str(e)}")
-        traceback.print_exc()  # 상세 오류 정보 출력
-        # 에러 발생 시 빈 목록 반환
+        print(f"워크시트 데이터 가져오기 중 오류 발생: {str(e)}")
         return []
 
 def get_random_problem(student_id=None, student_grade=None, problem_type=None):

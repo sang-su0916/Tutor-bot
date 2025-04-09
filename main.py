@@ -187,6 +187,9 @@ def initialize_session_state():
         st.session_state.initialized = True
         st.session_state.page = "intro"
         st.session_state.student_answer = None
+        # CSV 파일 경로 설정
+        st.session_state.use_csv = True
+        st.session_state.csv_path = "problems.csv"
         # 초기화 완료 표시
         st.session_state.setup_complete = True
 
@@ -473,7 +476,7 @@ def generate_dummy_problems(student_grade, count=20):
             problems.append(dummy_problem)
         return problems
 
-def load_exam_problems(student_id, student_grade, problem_count=20):
+def load_exam_problems(student_id, student_grade, problem_count=20, use_csv=True, csv_path="problems.csv"):
     """학생 학년에 맞는 시험 문제를 불러옵니다"""
     # 학생별 사용된 문제 ID 관리를 위한 세션 상태 초기화
     student_key = f"used_problem_ids_{student_id}"
@@ -498,8 +501,20 @@ def load_exam_problems(student_id, student_grade, problem_count=20):
             st.error("구글 시트에 연결할 수 없습니다.")
             return generate_dummy_problems(student_grade, problem_count)
         
-        # 문제 가져오기
-        all_problems = get_worksheet_records(connection, "problems")
+        # 문제 가져오기 - CSV 파일 사용 옵션 추가
+        all_problems = []
+        if use_csv and os.path.exists(csv_path):
+            # CSV 파일에서 문제 가져오기
+            all_problems = get_worksheet_records(connection, "problems", use_csv_file=True, csv_path=csv_path)
+            if all_problems:
+                st.success(f"CSV 파일에서 {len(all_problems)}개의 문제를 불러왔습니다.")
+            else:
+                st.warning("CSV 파일에서 문제를 불러올 수 없습니다. 구글 시트에서 시도합니다.")
+                all_problems = get_worksheet_records(connection, "problems")
+        else:
+            # 구글 시트에서 문제 가져오기
+            all_problems = get_worksheet_records(connection, "problems")
+        
         if not all_problems:
             st.warning("문제를 불러올 수 없습니다. 더미 문제를 사용합니다.")
             return generate_dummy_problems(student_grade, problem_count)
@@ -549,7 +564,7 @@ def load_exam_problems(student_id, student_grade, problem_count=20):
             # 문제 유형 카운트 증가
             problem_type_count[problem_type] = problem_type_count.get(problem_type, 0) + 1
             filtered_problems.append(p)
-        
+            
         # 유형별 통계 정보 출력
         st.info(f"학년 '{normalized_student_grade}'에 맞는 문제 {len(filtered_problems)}개를 찾았습니다.")
         if problem_type_count:
@@ -734,7 +749,9 @@ def exam_page():
                 st.session_state.exam_problems = load_exam_problems(
                     st.session_state.student_id, 
                     st.session_state.student_grade, 
-                    20
+                    20,
+                    use_csv=st.session_state.use_csv,
+                    csv_path=st.session_state.csv_path
                 )
             except Exception as e:
                 st.error(f"문제 로드 중 오류: {str(e)}")
