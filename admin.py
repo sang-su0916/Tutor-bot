@@ -277,7 +277,7 @@ def admin_login_page():
             else:
                 try:
                     teacher = get_teacher_by_username(username)
-                    if teacher and verify_password(teacher["비밀번호(해시)"], password):
+                    if teacher and "비밀번호(해시)" in teacher and verify_password(teacher["비밀번호(해시)"], password):
                         # 세션 상태 설정
                         if "admin_logged_in" not in st.session_state:
                             st.session_state.admin_logged_in = False
@@ -285,19 +285,19 @@ def admin_login_page():
                         
                         if "admin_id" not in st.session_state:
                             st.session_state.admin_id = ""
-                        st.session_state.admin_id = teacher["교사ID"]
+                        st.session_state.admin_id = teacher.get("교사ID", "")
                         
                         if "admin_name" not in st.session_state:
                             st.session_state.admin_name = ""
-                        st.session_state.admin_name = teacher["이름"]
+                        st.session_state.admin_name = teacher.get("이름", "")
                         
                         if "admin_school" not in st.session_state:
                             st.session_state.admin_school = ""
-                        st.session_state.admin_school = teacher["학교"]
+                        st.session_state.admin_school = teacher.get("학교", "")
                         
                         if "admin_username" not in st.session_state:
                             st.session_state.admin_username = ""
-                        st.session_state.admin_username = teacher["사용자이름"]
+                        st.session_state.admin_username = teacher.get("사용자이름", "")
                         
                         if "admin_action" not in st.session_state:
                             st.session_state.admin_action = "login"
@@ -306,6 +306,7 @@ def admin_login_page():
                         st.rerun()
                     else:
                         st.error("아이디 또는 비밀번호가 일치하지 않습니다.")
+                        st.info("아직 계정이 없다면 회원가입을 진행해주세요.")
                 except Exception as e:
                     st.error(f"로그인 처리 중 오류가 발생했습니다: {str(e)}")
                     st.info("아직 계정이 없다면 회원가입을 진행해주세요.")
