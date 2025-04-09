@@ -6,6 +6,7 @@ import random
 from datetime import datetime
 import uuid
 import traceback  # 오류 추적을 위한 모듈 추가
+import csv
 
 try:
     import gspread
@@ -300,61 +301,48 @@ def create_dummy_sheet():
     print("구글 스프레드시트에 연결 대신 더미 시트 객체를 사용합니다.")
     return DummySheet()
 
-def get_worksheet_records(sheet, worksheet_name, use_csv_file=False, csv_path=None, encoding='utf-8'):
-    """워크시트 데이터를 딕셔너리 목록으로 가져옵니다."""
-    try:
-        if use_csv_file and csv_path and os.path.exists(csv_path):
-            # CSV 파일에서 데이터 가져오기
-            try:
-                import pandas as pd
-                print(f"CSV 파일을 {encoding} 인코딩으로 읽기 시도 중...")
-                df = pd.read_csv(csv_path, encoding=encoding)
-                records = df.to_dict('records')
-                print(f"CSV 파일 '{csv_path}'에서 {len(records)}개의 레코드를 성공적으로 불러왔습니다.")
-                
-                # 보기정보 필드가 문자열인 경우 JSON으로 파싱 시도
-                for record in records:
-                    if "보기정보" in record and isinstance(record["보기정보"], str):
-                        try:
-                            import json
-                            record["보기정보"] = json.loads(record["보기정보"])
-                            print("보기정보 필드를 JSON으로 파싱했습니다.")
-                        except json.JSONDecodeError:
-                            print(f"보기정보 필드를 JSON으로 파싱하는데 실패했습니다: {record['보기정보']}")
-                
-                return records
-            except Exception as e:
-                print(f"CSV 파일 '{csv_path}' 읽기 오류 ({encoding} 인코딩): {str(e)}")
-                raise e
-        
-        # Google Sheets에서 데이터 가져오기
-        if not gspread_imported:
-            return []
-            
-        if sheet is None:
-            print("스프레드시트 연결이 없습니다.")
-            return []
-        
+def get_worksheet_records(connection, worksheet_name, use_csv_file=False, csv_path="problems.csv", encoding="utf-8", student_grade=None):
+    """구글 시트 또는 CSV 파일에서 레코드를 가져옵니다.
+    
+    Args:
+        connection: 구글 시트 연결 객체
+        worksheet_name: 워크시트 이름
+        use_csv_file: CSV 파일 사용 여부
+        csv_path: CSV 파일 경로
+        encoding: CSV 파일 인코딩
+        student_grade: 학생 학년 (학년별 시트 접근 시 사용)
+    
+    Returns:
+        list: 레코드 목록
+    """
+    if use_csv_file:
         try:
-            # 워크시트 가져오기
-            worksheet = sheet.worksheet(worksheet_name)
-            
-            # 헤더 확인
-            headers = worksheet.row_values(1)
-            if not headers:
-                print(f"{worksheet_name} 워크시트에 헤더가 없습니다.")
-                return []
-            
-            # 모든 레코드 가져오기
-            all_records = worksheet.get_all_records()
-            print(f"{worksheet_name} 워크시트에서 {len(all_records)}개의 레코드를 불러왔습니다.")
-            
-            return all_records
+            with open(csv_path, 'r', encoding=encoding) as f:
+                reader = csv.DictReader(f)
+                return list(reader)
         except Exception as e:
-            print(f"{worksheet_name} 워크시트 데이터 가져오기 오류: {str(e)}")
+            print(f"CSV 파일 읽기 오류: {str(e)}")
             return []
+    
+    try:
+        # 학년별 시트 접근 시
+        if student_grade:
+            # 학년별 시트 이름 생성 (예: "problems_중1", "problems_고1")
+            grade_sheet_name = f"problems_{student_grade}"
+            try:
+                worksheet = connection.worksheet(grade_sheet_name)
+                print(f"✅ 학년별 시트 접근 성공: {grade_sheet_name}")
+                return worksheet.get_all_records()
+            except Exception as e:
+                print(f"❌ 학년별 시트 접근 실패: {str(e)}")
+                # 학년별 시트가 없는 경우 기본 problems 시트로 폴백
+                print("기본 problems 시트로 폴백합니다.")
+        
+        # 기본 problems 시트 접근
+        worksheet = connection.worksheet(worksheet_name)
+        return worksheet.get_all_records()
     except Exception as e:
-        print(f"워크시트 데이터 가져오기 중 오류 발생: {str(e)}")
+        print(f"워크시트 접근 오류: {str(e)}")
         return []
 
 def get_random_problem(student_id=None, student_grade=None, problem_type=None):

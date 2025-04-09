@@ -47,31 +47,58 @@ def debug_problems_sheet():
                 all_data = problems_sheet.get_all_records()
                 print(f"✅ 총 {len(all_data)}개의 문제 데이터 발견")
                 
-                # 첫 번째 문제 출력
-                if all_data:
-                    print("\n첫 번째 문제 데이터:")
-                    pprint.pprint(all_data[0])
-                    
-                    # 필수 필드 확인
-                    required_fields = ["문제ID", "과목", "학년", "문제유형", "난이도", "문제내용", "정답"]
-                    missing_fields = [field for field in required_fields if field not in all_data[0] or not all_data[0][field]]
-                    
+                # 필수 필드 검증
+                required_fields = ["문제ID", "과목", "학년", "문제유형", "난이도", "문제내용", "정답"]
+                valid_problems = []
+                invalid_problems = []
+                
+                for idx, problem in enumerate(all_data, 1):
+                    missing_fields = [field for field in required_fields if field not in problem or not problem[field]]
                     if missing_fields:
-                        print(f"❌ 첫 번째 문제에 필수 필드가 누락되었습니다: {missing_fields}")
+                        invalid_problems.append({
+                            "row": idx + 1,
+                            "missing_fields": missing_fields,
+                            "problem_id": problem.get("문제ID", "없음")
+                        })
                     else:
-                        print("✅ 첫 번째 문제의 모든 필수 필드가 존재합니다")
-                    
-                    # 선택지 필드 확인 (객관식인 경우)
-                    if all_data[0].get("문제유형") == "객관식":
-                        option_fields = ["보기1", "보기2", "보기3", "보기4", "보기5"]
-                        missing_options = [field for field in option_fields if field not in all_data[0] or not all_data[0][field]]
-                        
-                        if missing_options and len(missing_options) > 1:  # 보기5는 없을 수 있음
-                            print(f"❌ 객관식 문제지만 일부 보기가 누락되었습니다: {missing_options}")
-                        else:
-                            print("✅ 객관식 문제의 보기가 적절히 설정되어 있습니다")
+                        valid_problems.append(problem)
+                
+                print(f"\n✅ 유효한 문제 수: {len(valid_problems)}")
+                print(f"❌ 유효하지 않은 문제 수: {len(invalid_problems)}")
+                
+                if invalid_problems:
+                    print("\n유효하지 않은 문제 목록:")
+                    for problem in invalid_problems[:5]:  # 처음 5개만 출력
+                        print(f"- 행 {problem['row']}: 문제ID {problem['problem_id']}")
+                        print(f"  누락된 필드: {', '.join(problem['missing_fields'])}")
+                
+                # 학년별 문제 수 통계
+                grade_stats = {}
+                for problem in valid_problems:
+                    grade = problem.get("학년", "미지정")
+                    grade_stats[grade] = grade_stats.get(grade, 0) + 1
+                
+                print("\n학년별 문제 수:")
+                for grade, count in grade_stats.items():
+                    print(f"- {grade}: {count}개")
+                
+                # 문제 유형별 통계
+                type_stats = {}
+                for problem in valid_problems:
+                    problem_type = problem.get("문제유형", "미지정")
+                    type_stats[problem_type] = type_stats.get(problem_type, 0) + 1
+                
+                print("\n문제 유형별 수:")
+                for problem_type, count in type_stats.items():
+                    print(f"- {problem_type}: {count}개")
+                
+                # 첫 번째 유효한 문제 출력
+                if valid_problems:
+                    print("\n첫 번째 유효한 문제 데이터:")
+                    pprint.pprint(valid_problems[0])
                 else:
-                    print("❌ 문제 데이터가 없습니다")
+                    print("\n❌ 유효한 문제가 없습니다.")
+                
             except gspread.exceptions.WorksheetNotFound:
                 print("❌ 'problems' 워크시트를 찾을 수 없습니다")
         except Exception as e:

@@ -484,220 +484,107 @@ def generate_dummy_problems(student_grade, count=20):
             problems.append(dummy_problem)
         return problems
 
-def load_exam_problems(student_id, student_grade, problem_count=20, use_csv=True, csv_path="problems.csv"):
-    """학생 학년에 맞는 시험 문제를 불러옵니다"""
+def get_used_problem_ids(student_id):
+    """학생이 이미 푼 문제 ID 목록을 가져옵니다."""
     # 학생별 사용된 문제 ID 관리를 위한 세션 상태 초기화
     student_key = f"used_problem_ids_{student_id}"
     if student_key not in st.session_state:
         st.session_state[student_key] = set()
     
-    # 이미 사용된 문제 ID 목록
-    used_problem_ids = st.session_state[student_key]
+    # 이미 사용된 문제 ID 목록 반환
+    return st.session_state[student_key]
+
+def get_google_sheet_connection():
+    """Google Sheets 연결을 가져옵니다."""
+    try:
+        return connect_to_sheets()
+    except Exception as e:
+        print(f"Google Sheets 연결 중 오류 발생: {str(e)}")
+        return None
+
+def load_exam_problems(student_id, student_grade, problem_count=20, use_csv=True, csv_path="problems.csv"):
+    """시험 문제를 로드합니다."""
+    print(f"\n=== 문제 로딩 시작 (학생 ID: {student_id}, 학년: {student_grade}) ===")
+    
+    # 이미 사용된 문제 ID 목록 가져오기
+    used_problem_ids = get_used_problem_ids(student_id)
     print(f"이미 사용된 문제 ID 수: {len(used_problem_ids)}")
     
-    attempts = 0
-    max_attempts = 50  # 무한 루프 방지
-    
     # 학년 정규화
-    normalized_student_grade = normalize_grade(student_grade)
-    print(f"정규화된 학년: {normalized_student_grade}")
+    normalized_grade = normalize_grade(student_grade)
+    print(f"정규화된 학년: {normalized_grade}")
     
+    # 문제 로드 시도
+    problems = []
     try:
-        # 구글 시트에 연결
-        connection = connect_to_sheets()
-        if not connection:
-            st.error("구글 시트에 연결할 수 없습니다.")
-            return generate_dummy_problems(student_grade, problem_count)
-        
-        # 문제 가져오기 - CSV 파일 사용 옵션 추가
-        all_problems = []
-        if use_csv and os.path.exists(csv_path):
-            # CSV 파일에서 문제 가져오기 (인코딩 시도 여러 번)
-            encodings = ['utf-8', 'cp949', 'euc-kr', 'latin1']
-            loaded = False
-            
-            for encoding in encodings:
-                try:
-                    print(f"CSV 파일을 {encoding} 인코딩으로 열기 시도...")
-                    all_problems = get_worksheet_records(connection, "problems", use_csv_file=True, csv_path=csv_path, encoding=encoding)
-                    if all_problems:
-                        st.success(f"CSV 파일을 {encoding} 인코딩으로 성공적으로 불러왔습니다. {len(all_problems)}개의 문제를 불러왔습니다.")
-                        loaded = True
-                        break
-                except Exception as e:
-                    print(f"{encoding} 인코딩으로 CSV 파일을 읽는 동안 오류 발생: {str(e)}")
-            
-            if not loaded:
-                st.warning("CSV 파일에서 문제를 불러올 수 없습니다. 구글 시트에서 시도합니다.")
-                all_problems = get_worksheet_records(connection, "problems")
+        # Google Sheets 연결 시도
+        sheet = get_google_sheet_connection()
+        if sheet:
+            print("✅ Google Sheets 연결 성공")
+            problems = get_worksheet_records(
+                sheet, 
+                "problems", 
+                use_csv_file=use_csv, 
+                csv_path=csv_path,
+                student_grade=normalized_grade  # 학년별 시트 접근
+            )
+            print(f"✅ Google Sheets에서 {len(problems)}개의 문제 로드")
         else:
-            # 구글 시트에서 문제 가져오기
-            all_problems = get_worksheet_records(connection, "problems")
-        
-        if not all_problems:
-            st.warning("문제를 불러올 수 없습니다. 더미 문제를 사용합니다.")
-            return generate_dummy_problems(student_grade, problem_count)
-        
-        print(f"총 {len(all_problems)}개의 문제를 불러왔습니다.")
-        
-        # 학년에 맞는 문제 필터링
-        filtered_problems = []
-        problem_type_count = {}
-        
-        for p in all_problems:
-            # 기본 유효성 검사
-            is_valid = True
-            
-            # 필수 필드 확인
-            required_fields = ["문제ID", "문제내용", "정답", "문제유형", "학년"]
-            for field in required_fields:
-                if field not in p or not p[field]:
-                    is_valid = False
-                    break
-            
-            if not is_valid:
-                continue
-                
-            # 이미 사용된 문제 ID 제외 - 학생별로 추적
-            if "문제ID" not in p or not p["문제ID"]:
-                is_valid = False
-                continue
-                
-            if p["문제ID"] in used_problem_ids:
-                continue
-            
-            # 학년 확인 (정규화된 학년과 일치 또는 포함 관계 확인)
-            problem_grade = p.get("학년", "")
-            problem_grade_norm = normalize_grade(problem_grade)
-            
-            # 학년 필터링 수정: 정확히 일치하지 않아도 포함관계도 허용
-            if not (problem_grade_norm == normalized_student_grade or 
-                   normalized_student_grade in problem_grade or 
-                   problem_grade in normalized_student_grade):
-                continue
-                
-            # 문제 유형별 추가 유효성 검사
-            problem_type = p.get("문제유형", "")
-            
-            # 유효한 문제만 추가
-            # 문제 유형 카운트 증가
-            problem_type_count[problem_type] = problem_type_count.get(problem_type, 0) + 1
-            filtered_problems.append(p)
-            
-        # 유형별 통계 정보 출력
-        st.info(f"학년 '{normalized_student_grade}'에 맞는 문제 {len(filtered_problems)}개를 찾았습니다.")
-        if problem_type_count:
-            type_info = ", ".join([f"{t}: {c}개" for t, c in problem_type_count.items()])
-            st.info(f"문제 유형 분포: {type_info}")
-        
-        # 만약 충분한 문제가 없다면 더미 문제로 보충
-        if len(filtered_problems) < problem_count:
-            dummy_count = problem_count - len(filtered_problems)
-            st.warning(f"유효한 문제가 부족하여 {dummy_count}개의 더미 문제를 추가합니다.")
-            dummy_problems = generate_dummy_problems(student_grade, dummy_count)
-            filtered_problems.extend(dummy_problems)
-        
-        # 문제 유형별로 분류
-        problems_by_type = {}
-        for p in filtered_problems:
-            # 이미 사용된 문제는 건너뛰기 (한 번 더 확인)
-            if p["문제ID"] in used_problem_ids:
-                continue
-                
-            problem_type = p.get("문제유형", "기타")
-            if problem_type not in problems_by_type:
-                problems_by_type[problem_type] = []
-            problems_by_type[problem_type].append(p)
-        
-        # 각 유형별로 균등하게 문제 선택 (유형별 비율 계산)
-        selected_problems = []
-        remaining_count = problem_count
-        
-        # 모든 유형에서 최소 1문제씩 선택
-        for problem_type, type_problems in problems_by_type.items():
-            if remaining_count <= 0:
-                break
-                
-            # 각 유형에서 1문제 선택
-            if type_problems:
-                selected = random.choice(type_problems)
-                selected_problems.append(selected)
-                used_problem_ids.add(selected["문제ID"])
-                
-                # 선택된 문제는 제외
-                type_problems.remove(selected)
-                remaining_count -= 1
-        
-        # 남은 문제 수를 유형별 비율에 따라 배분
-        if remaining_count > 0 and problems_by_type:
-            # 각 유형별 남은 문제 수 계산
-            total_remaining = sum(len(probs) for probs in problems_by_type.values())
-            
-            if total_remaining > 0:
-                # 유형별 비율 계산 및 문제 선택
-                for problem_type, type_problems in problems_by_type.items():
-                    if not type_problems or remaining_count <= 0:
-                        continue
-                    
-                    # 이 유형에서 선택할 문제 수 (최소 1개, 비율 기반 계산)
-                    type_ratio = len(type_problems) / total_remaining
-                    type_count = min(remaining_count, max(1, round(remaining_count * type_ratio)))
-                    
-                    # 실제 선택 가능한 문제 수로 제한
-                    type_count = min(type_count, len(type_problems))
-                    
-                    # 해당 유형에서 무작위로 선택
-                    for _ in range(type_count):
-                        if type_problems and remaining_count > 0:
-                            selected = random.choice(type_problems)
-                            selected_problems.append(selected)
-                            used_problem_ids.add(selected["문제ID"])
-                            type_problems.remove(selected)
-                            remaining_count -= 1
-        
-        # 여전히 부족하다면 남은 문제들 중에서 무작위로 선택
-        remaining_problems = [p for p in filtered_problems if p["문제ID"] not in used_problem_ids]
-        
-        while remaining_count > 0 and remaining_problems and attempts < max_attempts:
-            selected = random.choice(remaining_problems)
-            selected_problems.append(selected)
-            used_problem_ids.add(selected["문제ID"])
-            remaining_problems.remove(selected)
-            remaining_count -= 1
-            attempts += 1
-        
-        # 여전히 부족하다면 더미 문제로 추가
-        if remaining_count > 0:
-            dummy_problems = generate_dummy_problems(student_grade, remaining_count)
-            selected_problems.extend(dummy_problems)
-            
-            # 더미 문제 ID 추적
-            for p in dummy_problems:
-                if "문제ID" in p:
-                    used_problem_ids.add(p["문제ID"])
-        
-        # 세션 상태 업데이트
-        st.session_state[student_key] = used_problem_ids
-        print(f"업데이트 후 사용된 문제 ID 수: {len(used_problem_ids)}")
-        
-        # 선택된 문제 목록을 무작위로 섞기
-        random.shuffle(selected_problems)
-        
-        # 문제 유형 분포 확인 - 로그용
-        final_type_count = {}
-        for p in selected_problems:
-            problem_type = p.get("문제유형", "기타")
-            final_type_count[problem_type] = final_type_count.get(problem_type, 0) + 1
-        
-        type_distribution = ", ".join([f"{t}: {c}개" for t, c in final_type_count.items()])
-        st.info(f"최종 선택된 문제 유형 분포: {type_distribution}")
-        
-        return selected_problems[:problem_count]
-    
+            print("❌ Google Sheets 연결 실패")
+            if use_csv:
+                print("CSV 파일로 폴백 시도 중...")
+                problems = get_worksheet_records(
+                    None, 
+                    "problems", 
+                    use_csv_file=True, 
+                    csv_path=csv_path,
+                    student_grade=normalized_grade
+                )
+                print(f"✅ CSV 파일에서 {len(problems)}개의 문제 로드")
     except Exception as e:
-        st.error(f"문제 로드 중 오류 발생: {str(e)}")
-        # 오류 발생 시 더미 문제 반환
-        return generate_dummy_problems(student_grade, problem_count)
+        print(f"❌ 문제 로드 중 오류 발생: {str(e)}")
+        if use_csv:
+            print("CSV 파일로 폴백 시도 중...")
+            problems = get_worksheet_records(
+                None, 
+                "problems", 
+                use_csv_file=True, 
+                csv_path=csv_path,
+                student_grade=normalized_grade
+            )
+            print(f"✅ CSV 파일에서 {len(problems)}개의 문제 로드")
+    
+    # 문제 필터링
+    valid_problems = []
+    for problem in problems:
+        # 필수 필드 확인
+        if not all(key in problem for key in ["문제ID", "과목", "학년", "문제유형", "난이도", "문제내용", "정답"]):
+            print(f"❌ 필수 필드가 없는 문제 발견: {problem.get('문제ID', 'ID 없음')}")
+            continue
+        
+        # 이미 사용된 문제인지 확인
+        if problem["문제ID"] in used_problem_ids:
+            print(f"❌ 이미 사용된 문제 제외: {problem['문제ID']}")
+            continue
+        
+        # 학년 필터링 (기본 problems 시트 사용 시에만)
+        if not problem.get("학년") or problem["학년"] != normalized_grade:
+            print(f"❌ 학년 불일치 문제 제외: {problem['문제ID']} (기대: {normalized_grade}, 실제: {problem.get('학년')})")
+            continue
+        
+        valid_problems.append(problem)
+    
+    print(f"\n✅ 유효한 문제 수: {len(valid_problems)}")
+    
+    # 문제 수가 충분하지 않은 경우 더미 문제 추가
+    if len(valid_problems) < problem_count:
+        print(f"⚠️ 유효한 문제가 충분하지 않아 더미 문제 추가 (현재: {len(valid_problems)}, 필요: {problem_count})")
+        dummy_problems = generate_dummy_problems(normalized_grade, problem_count - len(valid_problems))
+        valid_problems.extend(dummy_problems)
+        print(f"✅ 더미 문제 {len(dummy_problems)}개 추가 완료")
+    
+    print(f"=== 최종 로드된 문제 수: {len(valid_problems)} ===")
+    return valid_problems
 
 def check_student_login():
     """학생 로그인 상태를 확인합니다."""
