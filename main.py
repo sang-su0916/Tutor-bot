@@ -659,7 +659,12 @@ def exam_page():
     
     # 시험 완료 처리 함수
     def submit_exam():
-        st.session_state.exam_submitted = True
+        if process_exam_results():
+            st.session_state.exam_submitted = True
+            st.session_state.page = "exam_score"
+            st.rerun()
+        else:
+            st.error("시험 결과 처리에 실패했습니다. 다시 시도해주세요.")
     
     # 제목 및 안내 표시
     st.title("학습 진단 시험")
@@ -683,11 +688,12 @@ def exam_page():
         with st.spinner("시험 결과를 처리하는 중입니다..."):
             try:
                 # 결과 저장 및 계산
-                save_exam_results()
-                
-                # 결과 페이지로 이동
-                st.session_state.page = "exam_score"
-                st.rerun()
+                if process_exam_results():
+                    # 결과 페이지로 이동
+                    st.session_state.page = "exam_score"
+                    st.rerun()
+                else:
+                    st.error("시험 결과 처리에 실패했습니다.")
             except Exception as e:
                 st.error(f"시험 결과 처리 중 오류가 발생했습니다: {str(e)}")
     
@@ -752,17 +758,17 @@ def exam_page():
                 choices = list(options.keys())
                 choices.sort()  # 보기1, 보기2... 순서로 정렬
                 
-                # 이미 선택한 답변이 있으면 해당 인덱스 찾기
-                selected_index = 0
+                # 이미 선택한 답변이 있으면 해당 인덱스 찾기, 없으면 기본값 None으로 설정
+                selected_index = None
                 if student_answer and student_answer in choices:
                     selected_index = choices.index(student_answer)
                 
-                # 라디오 버튼 표시
+                # 라디오 버튼 표시 - index 파라미터가 None이면 기본 선택 없음
                 selected = st.radio(
                     f"문제 {idx}",
                     choices,
                     format_func=lambda x: f"{x.replace('보기', '')}: {options[x]}",
-                    index=selected_index if student_answer else 0,
+                    index=selected_index,
                     key=f"radio_{problem_id}",
                     label_visibility="collapsed"
                 )
