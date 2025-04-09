@@ -171,25 +171,33 @@ def check_api_connections():
 
 def initialize_session_state():
     """세션 상태를 초기화합니다."""
-    if check_reset_command() or "initialized" not in st.session_state:
-        st.session_state.student_id = None
-        st.session_state.student_name = None
-        st.session_state.student_grade = None
-        st.session_state.student_level = None
-        st.session_state.current_problem = None
-        st.session_state.submitted = False
-        st.session_state.feedback = None
-        st.session_state.score = None
-        st.session_state.show_result = False
-        st.session_state.is_multiple_choice = False
-        st.session_state.previous_problems = set()
-        st.session_state.current_round = 1
+    if "initialized" not in st.session_state:
         st.session_state.initialized = True
         st.session_state.page = "intro"
-        st.session_state.student_answer = None
-        # CSV 파일 경로 설정
-        st.session_state.use_csv = True
+        st.session_state.api_status = None
+        st.session_state.setup_complete = False
+        st.session_state.using_dummy_sheet = False
+        st.session_state.sheets_connection_status = None
+        st.session_state.sheets_connection_success = False
+        
+        # 파일 경로 설정
+        st.session_state.service_account_path = "service_account.json"
         st.session_state.csv_path = "problems.csv"
+        st.session_state.use_csv = True  # CSV 파일 사용 활성화
+        
+        # 디버그 메시지
+        print("세션 상태가 초기화되었습니다.")
+        
+        # 설정값을 확인하고 출력
+        print("=== 시스템 구성 ===")
+        
+        if hasattr(st, 'secrets') and 'spreadsheet_id' in st.secrets:
+            print(f"스프레드시트 ID: {st.secrets['spreadsheet_id']}")
+        
+        print(f"서비스 계정 파일 경로: {st.session_state.service_account_path}")
+        print(f"CSV 파일 경로: {st.session_state.csv_path}")
+        print(f"CSV 파일 사용: {st.session_state.use_csv}")
+        
         # 초기화 완료 표시
         st.session_state.setup_complete = True
 
@@ -504,11 +512,22 @@ def load_exam_problems(student_id, student_grade, problem_count=20, use_csv=True
         # 문제 가져오기 - CSV 파일 사용 옵션 추가
         all_problems = []
         if use_csv and os.path.exists(csv_path):
-            # CSV 파일에서 문제 가져오기
-            all_problems = get_worksheet_records(connection, "problems", use_csv_file=True, csv_path=csv_path)
-            if all_problems:
-                st.success(f"CSV 파일에서 {len(all_problems)}개의 문제를 불러왔습니다.")
-            else:
+            # CSV 파일에서 문제 가져오기 (인코딩 시도 여러 번)
+            encodings = ['utf-8', 'cp949', 'euc-kr', 'latin1']
+            loaded = False
+            
+            for encoding in encodings:
+                try:
+                    print(f"CSV 파일을 {encoding} 인코딩으로 열기 시도...")
+                    all_problems = get_worksheet_records(connection, "problems", use_csv_file=True, csv_path=csv_path, encoding=encoding)
+                    if all_problems:
+                        st.success(f"CSV 파일을 {encoding} 인코딩으로 성공적으로 불러왔습니다. {len(all_problems)}개의 문제를 불러왔습니다.")
+                        loaded = True
+                        break
+                except Exception as e:
+                    print(f"{encoding} 인코딩으로 CSV 파일을 읽는 동안 오류 발생: {str(e)}")
+            
+            if not loaded:
                 st.warning("CSV 파일에서 문제를 불러올 수 없습니다. 구글 시트에서 시도합니다.")
                 all_problems = get_worksheet_records(connection, "problems")
         else:
@@ -736,8 +755,8 @@ def exam_page():
                     st.session_state.student_id, 
                     st.session_state.student_grade, 
                     20,
-                    use_csv=st.session_state.use_csv,
-                    csv_path=st.session_state.csv_path
+                    use_csv=True,
+                    csv_path="problems.csv"
                 )
             except Exception as e:
                 st.error(f"문제 로드 중 오류: {str(e)}")
@@ -799,7 +818,7 @@ def exam_page():
         st.write(f"### 문제 {idx}/{len(st.session_state.exam_problems)}")
         
         # 문제 메타데이터 표시
-        meta_col1, meta_col2, meta_col3, meta_col4, meta_col5 = st.columns(5)
+        meta_col1, meta_col2, meta_col3, meta_col4 = st.columns(4)
         with meta_col1:
             st.write(f"**과목**: {problem.get('과목', '영어')}")
         with meta_col2:
@@ -811,83 +830,63 @@ def exam_page():
         
         # 문제 내용 표시
         question = problem.get("문제내용", "문제 내용이 없습니다.")
-        st.write(f"{question}")
+        st.write(f"**{question}**")
         
         # 객관식 문제처리
         if problem.get("문제유형", "객관식") == "객관식":
-            has_options = False
+            options = {}
             
-            # 보기정보 확인 및 처리
-            if "보기정보" in problem:
-                options_info = problem["보기정보"]
-                
-                # 문자열로 된 보기정보를 딕셔너리로 변환
-                if isinstance(options_info, str):
+            # 보기정보 처리
+            if "보기정보" in problem and problem["보기정보"]:
+                # 보기정보가 문자열인 경우 JSON으로 파싱 시도
+                if isinstance(problem["보기정보"], str):
                     try:
                         import json
-                        options_info = json.loads(options_info)
-                        problem["보기정보"] = options_info  # 변환된 값 저장
+                        problem["보기정보"] = json.loads(problem["보기정보"])
                     except json.JSONDecodeError as e:
-                        st.error(f"보기정보 형식 오류: {str(e)}")
+                        st.error(f"보기정보 JSON 파싱 오류: {str(e)}")
                 
-                if "보기정보" in problem and problem["보기정보"]:
-                    options = []
-                    option_texts = {}
-                    
-                    # 보기 중복 확인을 위한 집합
-                    seen_options_text = set()
-                    
-                    try:
-                        # 보기 항목들을 정렬해서 일관된 순서로 표시
-                        sorted_options = sorted(problem["보기정보"].items())
-                        
-                        # 보기 개수 표준화 - 최대 5개로 통일
-                        max_options = 5
-                        
-                        # 가능한 모든 보기키 생성 ("보기1"~"보기5")
-                        all_option_keys = [f"보기{i}" for i in range(1, max_options+1)]
-                        
-                        # 실제 있는 보기 처리
-                        for key, text in sorted_options:
-                            if not key.startswith("보기"):
-                                continue  # 보기 형식이 아닌 키는 건너뜀
-                                
-                            # 중복된 보기 텍스트 제거
-                            if text and text not in seen_options_text:
-                                options.append(key)
-                                option_texts[key] = text
-                                seen_options_text.add(text)
-                        
-                        # 보기가 있는지 확인
-                        if options:
-                            has_options = True
-                            # 선택 라디오 버튼
-                            st.markdown("### 정답 선택:")
-                            
-                            # 인덱스 확인 로직 개선
-                            index = None
-                            if student_answer in options:
-                                index = options.index(student_answer)
-                            
-                            selected = st.radio(
-                                f"문제 {idx}",
-                                options,
-                                format_func=lambda x: f"{x.replace('보기', '')}: {option_texts[x]}",
-                                index=index,  # 저장된 답안이 없으면 선택하지 않음
-                                key=f"radio_{problem_id}",
-                                label_visibility="collapsed"
-                            )
-                            
-                            # 학생 답안 저장
-                            if selected is not None:  # 선택된 경우에만 저장
-                                if problem_id not in st.session_state.student_answers:
-                                    st.session_state.student_answers[problem_id] = problem.copy()
-                                st.session_state.student_answers[problem_id]["제출답안"] = selected
-                    except Exception as e:
-                        st.error(f"보기 처리 중 오류: {str(e)}")
+                # 보기정보가 딕셔너리면 바로 사용
+                if isinstance(problem["보기정보"], dict):
+                    options = problem["보기정보"]
             
-            # 보기가 없거나 오류 발생 시 안내 메시지 표시
-            if not has_options:
+            # 전통적인 방식의 보기(보기1, 보기2...)가 있는지 확인
+            if not options:
+                for i in range(1, 6):
+                    option_key = f"보기{i}"
+                    if option_key in problem and problem[option_key]:
+                        options[option_key] = problem[option_key]
+            
+            # 보기가 있으면 라디오 버튼으로 표시
+            if options:
+                st.markdown("### 정답 선택:")
+                
+                # 선택지 배열 생성 및 정렬
+                choices = list(options.keys())
+                choices.sort()  # 보기1, 보기2... 순서로 정렬
+                
+                # 이미 선택한 답변이 있으면 해당 인덱스 찾기
+                selected_index = 0
+                if student_answer and student_answer in choices:
+                    selected_index = choices.index(student_answer)
+                
+                # 라디오 버튼 표시
+                selected = st.radio(
+                    f"문제 {idx}",
+                    choices,
+                    format_func=lambda x: f"{x.replace('보기', '')}: {options[x]}",
+                    index=selected_index if student_answer else 0,
+                    key=f"radio_{problem_id}",
+                    label_visibility="collapsed"
+                )
+                
+                # 학생 답안 저장
+                if selected:
+                    if problem_id not in st.session_state.student_answers:
+                        st.session_state.student_answers[problem_id] = problem.copy()
+                    st.session_state.student_answers[problem_id]["제출답안"] = selected
+            else:
+                # 보기가 없는 경우 텍스트 입력으로 대체
                 st.warning("이 문제에 대한 보기 정보가 없습니다. 직접 답안을 입력해주세요.")
                 
                 # 주관식으로 답변 입력
@@ -899,7 +898,7 @@ def exam_page():
                 )
                 
                 # 학생 답안 저장
-                if answer:  # 답안이 입력된 경우만 저장
+                if answer:
                     if problem_id not in st.session_state.student_answers:
                         st.session_state.student_answers[problem_id] = problem.copy()
                     st.session_state.student_answers[problem_id]["제출답안"] = answer
@@ -916,7 +915,7 @@ def exam_page():
             )
             
             # 학생 답안 저장
-            if answer:  # 답안이 입력된 경우만 저장
+            if answer:
                 if problem_id not in st.session_state.student_answers:
                     st.session_state.student_answers[problem_id] = problem.copy()
                 st.session_state.student_answers[problem_id]["제출답안"] = answer

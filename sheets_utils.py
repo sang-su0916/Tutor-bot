@@ -300,61 +300,32 @@ def create_dummy_sheet():
     print("구글 스프레드시트에 연결 대신 더미 시트 객체를 사용합니다.")
     return DummySheet()
 
-def get_worksheet_records(sheet, worksheet_name, use_csv_file=False, csv_path=None):
-    """워크시트의 모든 레코드를 가져옵니다."""
+def get_worksheet_records(sheet, worksheet_name, use_csv_file=False, csv_path=None, encoding='utf-8'):
+    """워크시트 데이터를 딕셔너리 목록으로 가져옵니다."""
     try:
-        if use_csv_file and csv_path:
-            import pandas as pd
-            import os
-            
-            # CSV 파일이 존재하는지 확인
-            if not os.path.exists(csv_path):
-                print(f"CSV 파일을 찾을 수 없습니다: {csv_path}")
-                return []
-            
+        if use_csv_file and csv_path and os.path.exists(csv_path):
+            # CSV 파일에서 데이터 가져오기
             try:
-                # 다양한 인코딩 시도
-                encodings = ['utf-8', 'cp949', 'euc-kr', 'latin1']
-                records = []
-                error_messages = []
+                import pandas as pd
+                print(f"CSV 파일을 {encoding} 인코딩으로 읽기 시도 중...")
+                df = pd.read_csv(csv_path, encoding=encoding)
+                records = df.to_dict('records')
+                print(f"CSV 파일 '{csv_path}'에서 {len(records)}개의 레코드를 성공적으로 불러왔습니다.")
                 
-                for encoding in encodings:
-                    try:
-                        print(f"CSV 파일을 {encoding} 인코딩으로 읽기 시도: {csv_path}")
-                        # CSV 파일 읽기
-                        df = pd.read_csv(csv_path, encoding=encoding)
-                        
-                        # DataFrame을 딕셔너리 리스트로 변환
-                        records = df.to_dict(orient='records')
-                        print(f"CSV 파일에서 {len(records)}개의 문제를 {encoding} 인코딩으로 불러왔습니다.")
-                        
-                        # 보기정보 필드가 문자열이면 딕셔너리로 변환
-                        for record in records:
-                            if "보기정보" in record and isinstance(record["보기정보"], str):
-                                try:
-                                    import json
-                                    record["보기정보"] = json.loads(record["보기정보"])
-                                except:
-                                    # JSON 변환 실패 시 기본값 유지
-                                    pass
-                        
-                        # 성공하면 루프 종료
-                        break
-                    except Exception as e:
-                        error_messages.append(f"{encoding} 인코딩 시도 실패: {str(e)}")
-                        continue
+                # 보기정보 필드가 문자열인 경우 JSON으로 파싱 시도
+                for record in records:
+                    if "보기정보" in record and isinstance(record["보기정보"], str):
+                        try:
+                            import json
+                            record["보기정보"] = json.loads(record["보기정보"])
+                            print("보기정보 필드를 JSON으로 파싱했습니다.")
+                        except json.JSONDecodeError:
+                            print(f"보기정보 필드를 JSON으로 파싱하는데 실패했습니다: {record['보기정보']}")
                 
-                if records:
-                    return records
-                else:
-                    # 모든 인코딩 시도 실패
-                    print("모든 인코딩 시도 실패:")
-                    for msg in error_messages:
-                        print(f"  - {msg}")
-                    return []
+                return records
             except Exception as e:
-                print(f"CSV 파일 읽기 오류: {str(e)}")
-                return []
+                print(f"CSV 파일 '{csv_path}' 읽기 오류 ({encoding} 인코딩): {str(e)}")
+                raise e
         
         # Google Sheets에서 데이터 가져오기
         if not gspread_imported:
