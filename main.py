@@ -719,31 +719,17 @@ def my_performance_page():
 
 def exam_page():
     """시험 페이지 - 모든 문제를 한 페이지에 표시합니다."""
-    # 화면 초기화 방지를 위한 세션 상태 확인
-    if "exam_start_flag" not in st.session_state:
-        st.session_state.exam_start_flag = True
     
-    if not hasattr(st.session_state, 'student_id') or st.session_state.student_id is None:
+    if not check_student_login():
         st.error("로그인 정보가 없습니다.")
         if st.button("로그인 페이지로 돌아가기"):
             st.session_state.page = "intro"
             st.rerun()
         return
     
-    # 로딩 스피너 표시
-    with st.spinner("시험 준비 중..."):
-        # 시험 상태 확인
-        if 'exam_initialized' not in st.session_state or not st.session_state.exam_initialized:
-            # 시험 초기화
-            st.session_state.exam_initialized = True
-            st.session_state.student_answers = {}
-            st.session_state.exam_problems = None  # 이미 로드된 문제가 있으면 초기화
-            st.session_state.exam_answered_count = 0
-            st.session_state.exam_start_time = time.time()
-            
-            # 학생별 문제 ID 추적 상태는 초기화하지 않음
-            # 이전 세션에서 사용한 문제를 계속 추적하도록 유지
-            
+    # 시험 문제가 세션에 없으면 로드
+    if "exam_problems" not in st.session_state or not st.session_state.exam_problems:
+        with st.spinner("시험 문제를 불러오는 중입니다..."):
             # 시험 문제 로드
             try:
                 st.session_state.exam_problems = load_exam_problems(
@@ -756,51 +742,94 @@ def exam_page():
             except Exception as e:
                 st.error(f"문제 로드 중 오류: {str(e)}")
                 st.session_state.exam_problems = []
+    
+    # 학생 답변 초기화
+    if "student_answers" not in st.session_state:
+        st.session_state.student_answers = {}
+    
+    # 제출 상태 초기화
+    if "exam_submitted" not in st.session_state:
+        st.session_state.exam_submitted = False
+    
+    # 시험 완료 처리 함수
+    def submit_exam():
+        st.session_state.exam_submitted = True
+    
+    # 제목 및 안내 표시
+    st.title("학습 진단 시험")
+    
+    # 학생 정보 표시
+    st.markdown(f"**학생**: {st.session_state.student_name} | **학년**: {st.session_state.student_grade} | **실력등급**: {st.session_state.student_level}")
+    
+    # 시험 문제가 있는지 확인
+    if not st.session_state.exam_problems:
+        st.warning("현재 가능한 시험 문제가 없습니다.")
+        if st.button("대시보드로 돌아가기", use_container_width=True):
+            st.session_state.page = "student_dashboard"
+            st.rerun()
+        return
+    
+    # 시험 설명
+    st.write(f"총 {len(st.session_state.exam_problems)}개의 문제가 있습니다. 모든 문제에 답변 후 제출해주세요.")
+    
+    # 시험이 제출되었을 경우 결과 처리
+    if st.session_state.exam_submitted:
+        with st.spinner("시험 결과를 처리하는 중입니다..."):
+            try:
+                # 결과 저장 및 계산
+                save_exam_results()
+                
+                # 결과 페이지로 이동
+                st.session_state.page = "exam_score"
+                st.rerun()
+            except Exception as e:
+                st.error(f"시험 결과 처리 중 오류가 발생했습니다: {str(e)}")
+    
+    # 문제 표시
+    for idx, problem in enumerate(st.session_state.exam_problems, 1):
+        problem_id = problem.get("문제ID", f"dummy-{idx}")
+        
+        # 학생 답변 가져오기
+        student_answer = ""
+        if problem_id in st.session_state.student_answers and "제출답안" in st.session_state.student_answers[problem_id]:
+            student_answer = st.session_state.student_answers[problem_id]["제출답안"]
+        
+        # 문제 정보 추출
+        st.write("---")
+        st.write(f"### 문제 {idx}/{len(st.session_state.exam_problems)}")
+        
+        # 문제 메타데이터 표시
+        meta_col1, meta_col2, meta_col3, meta_col4, meta_col5 = st.columns(5)
+        with meta_col1:
+            st.write(f"**과목**: {problem.get('과목', '영어')}")
+        with meta_col2:
+            st.write(f"**난이도**: {problem.get('난이도', '중')}")
+        with meta_col3:
+            st.write(f"**학년**: {problem.get('학년', '중1')}")
+        with meta_col4:
+            st.write(f"**유형**: {problem.get('문제유형', '객관식')}")
+        
+        # 문제 내용 표시
+        question = problem.get("문제내용", "문제 내용이 없습니다.")
+        st.write(f"{question}")
+        
+        # 객관식 문제처리
+        if problem.get("문제유형", "객관식") == "객관식":
+            has_options = False
             
-            # 문제 로드 확인
-            if not st.session_state.exam_problems:
-                st.error("문제를 로드하지 못했습니다. 다시 시도해주세요.")
-                if st.button("대시보드로 돌아가기", key="go_back_dashboard_error"):
-                    st.session_state.page = "student_dashboard"
-                    st.rerun()
-                return
-    
-    # 헤더 표시
-    st.title("시험지")
-    
-    # 학생 정보 표시 (타이머 제거)
-    st.markdown(f"학생: {st.session_state.student_name} | 학년: {st.session_state.student_grade} | 실력등급: {st.session_state.student_level}")
-    
-    # 시험 진행 상태
-    actual_problem_count = len(st.session_state.exam_problems)
-    st.info(f"총 {actual_problem_count}개의 문제가 있습니다. 모든 문제를 풀고 제출하세요.")
-    
-    # 문제 수 확인
-    if actual_problem_count < 20:
-        st.warning(f"현재 {actual_problem_count}개의 문제만 로드되었습니다.")
-    
-    # 폼 생성
-    with st.form("exam_form", clear_on_submit=False):
-        # 각 문제 표시
-        for idx, problem in enumerate(st.session_state.exam_problems, 1):
-            # 문제 ID
-            problem_id = problem["문제ID"]
-            
-            # 문제 박스 생성
-            with st.container(border=True):
-                # 문제 헤더
-                st.markdown(f"## 문제 {idx}/{actual_problem_count}")
-                st.markdown(f"과목: {problem.get('과목', '영어')} | 학년: {problem.get('학년', '')} | 유형: {problem.get('문제유형', '객관식')} | 난이도: {problem.get('난이도', '중')}")
+            # 보기정보 확인 및 처리
+            if "보기정보" in problem:
+                options_info = problem["보기정보"]
                 
-                # 문제 내용
-                st.markdown(problem["문제내용"])
+                # 문자열로 된 보기정보를 딕셔너리로 변환
+                if isinstance(options_info, str):
+                    try:
+                        import json
+                        options_info = json.loads(options_info)
+                        problem["보기정보"] = options_info  # 변환된 값 저장
+                    except json.JSONDecodeError as e:
+                        st.error(f"보기정보 형식 오류: {str(e)}")
                 
-                # 저장된 답안 불러오기
-                saved_answer = st.session_state.student_answers.get(problem_id, {})
-                student_answer = saved_answer.get("제출답안", "")
-                
-                # 보기가 있는 경우 라디오 버튼으로 표시
-                has_options = False
                 if "보기정보" in problem and problem["보기정보"]:
                     options = []
                     option_texts = {}
@@ -856,54 +885,61 @@ def exam_page():
                                 st.session_state.student_answers[problem_id]["제출답안"] = selected
                     except Exception as e:
                         st.error(f"보기 처리 중 오류: {str(e)}")
+            
+            # 보기가 없거나 오류 발생 시 안내 메시지 표시
+            if not has_options:
+                st.warning("이 문제에 대한 보기 정보가 없습니다. 직접 답안을 입력해주세요.")
                 
-                # 보기가 없거나 처리 오류면 텍스트 입력으로 대체
-                if not has_options:
-                    # 선택형이지만 보기 정보가 없는 경우
-                    if problem.get("문제유형") == "객관식":
-                        st.error("이 문제에 대한 보기 정보가 없습니다. 직접 답안을 입력해주세요.")
-                    
-                    # 주관식인 경우 텍스트 입력
-                    st.markdown("### 답안 입력:")
-                    answer = st.text_input(
-                        f"문제 {idx} 답안",
-                        value=student_answer,
-                        key=f"text_{problem_id}",
-                        max_chars=200
-                    )
-                    
-                    # 학생 답안 저장
-                    if answer.strip():  # 입력된 경우에만 저장
-                        if problem_id not in st.session_state.student_answers:
-                            st.session_state.student_answers[problem_id] = problem.copy()
-                        st.session_state.student_answers[problem_id]["제출답안"] = answer
+                # 주관식으로 답변 입력
+                answer = st.text_input(
+                    "답안",
+                    value=student_answer,
+                    key=f"text_{problem_id}",
+                    placeholder="답안을 입력하세요"
+                )
+                
+                # 학생 답안 저장
+                if answer:  # 답안이 입력된 경우만 저장
+                    if problem_id not in st.session_state.student_answers:
+                        st.session_state.student_answers[problem_id] = problem.copy()
+                    st.session_state.student_answers[problem_id]["제출답안"] = answer
         
-        # 제출 버튼
-        submit_button = st.form_submit_button("시험지 제출하기", use_container_width=True)
-        
-    # 폼 제출 후 처리 - 폼 바깥에서 처리하여 재렌더링 문제 해결
-    if submit_button:
-        with st.spinner("답안 제출 중..."):
-            # 결과 처리 - 별도 함수로 추출
-            success = process_exam_results()
-            if success:
-                st.session_state.exam_submitted = True
-                st.session_state.page = "exam_score"
-                st.rerun()
-            else:
-                st.error("결과 처리 중 오류가 발생했습니다. 다시 시도해주세요.")
-    
-    # 대시보드로 돌아가기
-    if st.button("← 대시보드로 돌아가기", use_container_width=True):
-        if st.session_state.student_answers:
-            # 작성 중인 답안이 있는 경우 확인
-            confirm = st.button("정말 나가시겠습니까? 저장되지 않은 답안은 사라집니다.", key="confirm_exit")
-            if confirm:
-                st.session_state.page = "student_dashboard"
-                st.rerun()
+        # 주관식 문제처리
         else:
-            st.session_state.page = "student_dashboard"
-            st.rerun()
+            # 주관식 답변 입력창
+            answer = st.text_area(
+                "답안",
+                value=student_answer,
+                key=f"textarea_{problem_id}",
+                placeholder="답안을 입력하세요",
+                height=150
+            )
+            
+            # 학생 답안 저장
+            if answer:  # 답안이 입력된 경우만 저장
+                if problem_id not in st.session_state.student_answers:
+                    st.session_state.student_answers[problem_id] = problem.copy()
+                st.session_state.student_answers[problem_id]["제출답안"] = answer
+    
+    # 제출 버튼
+    st.write("---")
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("시험 제출하기", use_container_width=True, type="primary"):
+            # 미응답 문제 확인
+            unanswered_problems = []
+            for idx, problem in enumerate(st.session_state.exam_problems, 1):
+                problem_id = problem.get("문제ID", f"dummy-{idx}")
+                if problem_id not in st.session_state.student_answers or "제출답안" not in st.session_state.student_answers[problem_id] or not st.session_state.student_answers[problem_id]["제출답안"]:
+                    unanswered_problems.append(idx)
+            
+            if unanswered_problems:
+                # 미응답 문제가 있을 경우 경고
+                st.warning(f"다음 문제가 응답되지 않았습니다: {', '.join(map(str, unanswered_problems))}")
+                st.warning("모든 문제에 답변한 후 제출해주세요.")
+            else:
+                # 모든 문제에 응답한 경우 제출 처리
+                submit_exam()
 
 def process_exam_results():
     """시험 결과를 처리하고 세션 상태에 저장합니다."""

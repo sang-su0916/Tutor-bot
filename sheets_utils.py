@@ -313,14 +313,45 @@ def get_worksheet_records(sheet, worksheet_name, use_csv_file=False, csv_path=No
                 return []
             
             try:
-                # CSV 파일 읽기
-                print(f"CSV 파일에서 문제를 불러옵니다: {csv_path}")
-                df = pd.read_csv(csv_path, encoding='utf-8')
+                # 다양한 인코딩 시도
+                encodings = ['utf-8', 'cp949', 'euc-kr', 'latin1']
+                records = []
+                error_messages = []
                 
-                # DataFrame을 딕셔너리 리스트로 변환
-                records = df.to_dict(orient='records')
-                print(f"CSV 파일에서 {len(records)}개의 문제를 불러왔습니다.")
-                return records
+                for encoding in encodings:
+                    try:
+                        print(f"CSV 파일을 {encoding} 인코딩으로 읽기 시도: {csv_path}")
+                        # CSV 파일 읽기
+                        df = pd.read_csv(csv_path, encoding=encoding)
+                        
+                        # DataFrame을 딕셔너리 리스트로 변환
+                        records = df.to_dict(orient='records')
+                        print(f"CSV 파일에서 {len(records)}개의 문제를 {encoding} 인코딩으로 불러왔습니다.")
+                        
+                        # 보기정보 필드가 문자열이면 딕셔너리로 변환
+                        for record in records:
+                            if "보기정보" in record and isinstance(record["보기정보"], str):
+                                try:
+                                    import json
+                                    record["보기정보"] = json.loads(record["보기정보"])
+                                except:
+                                    # JSON 변환 실패 시 기본값 유지
+                                    pass
+                        
+                        # 성공하면 루프 종료
+                        break
+                    except Exception as e:
+                        error_messages.append(f"{encoding} 인코딩 시도 실패: {str(e)}")
+                        continue
+                
+                if records:
+                    return records
+                else:
+                    # 모든 인코딩 시도 실패
+                    print("모든 인코딩 시도 실패:")
+                    for msg in error_messages:
+                        print(f"  - {msg}")
+                    return []
             except Exception as e:
                 print(f"CSV 파일 읽기 오류: {str(e)}")
                 return []
